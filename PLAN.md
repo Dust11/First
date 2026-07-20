@@ -240,7 +240,7 @@ IDLE → PLAYING → PAUSED → PLAYING → FINISHED → IDLE
 ## 文件结构
 
 ```
-D:\xueding\project\mc\key_overlay/
+project\mc\key_overlay/
 ├── CMakeLists.txt
 ├── src/
 │   ├── main.cpp                    // 入口
