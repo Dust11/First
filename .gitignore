@@ -1,0 +1,26 @@
+# Build directories
+build/
+out/
+.cmake/
+
+# Visual Studio
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# Temporary files
+*.tmp
+*.log
+
+# FetchContent subbuilds
+_fetchcontent_*/
+
+# ImGui ini (editor window layout)
+imgui.ini

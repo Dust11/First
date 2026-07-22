@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["active_rotation", "team_rotations"],
+  "properties": {
+    "active_rotation": { "type": "string" },
+    "team_rotations": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/team_rotation" }
+    },
+    "settings": { "type": "object" }
+  },
+  "definitions": {
+    "team_rotation": {
+      "type": "object",
+      "required": ["name", "steps"],
+      "properties": {
+        "name": { "type": "string" },
+        "background": { "type": "string" },
+        "characters": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/character_info" }
+        },
+        "stages": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/stage_marker" }
+        },
+        "steps": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/key_step" }
+        }
+      }
+    },
+    "character_info": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "avatar_image": { "type": "string" },
+        "theme_color": { "type": "string" }
+      }
+    },
+    "stage_marker": {
+      "type": "object",
+      "required": ["label", "start_step"],
+      "properties": {
+        "label": { "type": "string" },
+        "color": { "type": "string" },
+        "start_step": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "key_step": {
+      "type": "object",
+      "required": ["character", "key"],
+      "properties": {
+        "character": { "type": "string" },
+        "key": { "type": "string" },
+        "skill_name": { "type": "string" },
+        "key_icon": { "type": "string" },
+        "duration_ms": { "type": "integer", "minimum": 100 }
+      }
+    }
+  }
+}
