@@ -24,6 +24,6 @@ private:
 
 } // namespace overlay::utils
 
-#define LOG_INFO(msg)  overlay::utils::Logger::Instance().Log("INFO", (msg))
-#define LOG_WARN(msg)  overlay::utils::Logger::Instance().Log("WARN", (msg))
-#define LOG_ERROR(msg) overlay::utils::Logger::Instance().Log("ERROR", (msg))
+#define LOG_INFO(msg)  ::overlay::utils::Logger::Instance().Log("INFO", (msg))
+#define LOG_WARN(msg)  ::overlay::utils::Logger::Instance().Log("WARN", (msg))
+#define LOG_ERROR(msg) ::overlay::utils::Logger::Instance().Log("ERROR", (msg))

@@ -13,6 +13,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # 静态运行时 + UTF-8
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_compile_options(/utf-8 /W4 /WX-)
+add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 
 # 统一 exe 输出目录，方便 post-build 拷贝资源
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
