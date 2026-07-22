@@ -35,7 +35,14 @@ struct TeamRotation {
     std::vector<KeyStep> steps;
 };
 
+// 规范化并校验队伍流程：阶段排序、duration 截断、key_icon 自动推断、字符存在性检查
 void NormalizeTeamRotation(TeamRotation& rotation);
+
+// 根据 key 名推断 key_icon（空字符串时调用）
+std::string InferKeyIcon(std::string_view key);
+
+// 按角色名查找角色视觉信息；找不到返回 nullptr
+const CharacterInfo* FindCharacter(const TeamRotation& rotation, std::string_view name);
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CharacterInfo, name, avatar_image, theme_color)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(StageMarker, label, color, start_step)
