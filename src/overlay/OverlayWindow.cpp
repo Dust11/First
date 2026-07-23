@@ -189,6 +189,11 @@ LRESULT OverlayWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         PostQuitMessage(0);
         return 0;
 
+    case WM_CLOSE:
+        LOG_INFO("OverlayWindow received WM_CLOSE, destroying window.");
+        DestroyWindow(hwnd_);
+        return 0;
+
     case WM_DPICHANGED: {
         // 高 DPI 变更：使用系统建议矩形
         auto* const rect = reinterpret_cast<RECT*>(lParam);

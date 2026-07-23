@@ -336,6 +336,11 @@ static void RenderLoop(AppContext& ctx) {
         ctx.renderer->EndDraw();
         ctx.renderer->Present();
 
+        // 渲染编辑器窗口（如果打开）
+        if (ctx.editor && ctx.editor->IsOpen()) {
+            ctx.editor->RenderFrame();
+        }
+
         // 按键检测模式下不需要逐帧 16ms 高速渲染，可降低到 ~30Hz
         std::this_thread::sleep_for(ModeIsKey(ctx.mode) ? std::chrono::milliseconds(33)
                                                         : std::chrono::milliseconds(16));
@@ -462,7 +467,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     renderer.Resize(static_cast<int>(window_width), static_cast<int>(window_height));
 
     // 初始化编辑器窗口（延迟到首次打开时再创建 D3D/ImGui 资源）
-    editor.Initialize(hwnd);
+    editor.Initialize(hwnd, renderer.GetD3DDevice());
 
     // 初始化播放引擎与按键检测器
     ApplyActiveRotation(ctx);
@@ -470,7 +475,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
 
     // 启动自动关闭计时器（仅用于阶段验证，最终产品可移除）
     std::thread timer([hwnd]() {
-        std::this_thread::sleep_for(30s);
+        std::this_thread::sleep_for(5s);
+        LOG_INFO("Auto-close timer elapsed, posting WM_CLOSE.");
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
     });
 
