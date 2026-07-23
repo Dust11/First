@@ -118,6 +118,20 @@ void OverlayWindow::SetScale(float scale) {
     SetSize(new_w, new_h);
 }
 
+int OverlayWindow::GetClientWidth() const {
+    if (!hwnd_) return width_;
+    RECT rc{};
+    GetClientRect(hwnd_, &rc);
+    return rc.right - rc.left;
+}
+
+int OverlayWindow::GetClientHeight() const {
+    if (!hwnd_) return height_;
+    RECT rc{};
+    GetClientRect(hwnd_, &rc);
+    return rc.bottom - rc.top;
+}
+
 void OverlayWindow::SetMoveMode(bool enabled) {
     if (move_mode_ == enabled) return;
     move_mode_ = enabled;

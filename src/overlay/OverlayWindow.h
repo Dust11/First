@@ -37,6 +37,8 @@ public:
     void PostQuit();
 
     HWND GetHwnd() const { return hwnd_; }
+    int GetClientWidth() const;
+    int GetClientHeight() const;
 
     // 按键/窗口事件回调，由 PlaybackEngine/KeyDetector 注册
     using KeyEventCallback = std::function<void(UINT msg, WPARAM wParam, LPARAM lParam)>;

@@ -21,6 +21,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/bin)
 
 include(FetchContent)
+set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
 
 # nlohmann/json 单头文件
 FetchContent_Declare(
@@ -63,6 +64,7 @@ set(SOURCES
     src/core/KeyDetector.cpp
     src/overlay/Direct2DRenderer.cpp
     src/overlay/OverlayWindow.cpp
+    src/overlay/VisualRenderer.cpp
     src/editor/EditorWindow.cpp
     src/editor/EditorComponents.cpp
 )
@@ -79,6 +81,7 @@ set(HEADERS
     src/overlay/IRenderer.h
     src/overlay/Direct2DRenderer.h
     src/overlay/OverlayWindow.h
+    src/overlay/VisualRenderer.h
     src/editor/EditorWindow.h
     src/editor/EditorComponents.h
 )
