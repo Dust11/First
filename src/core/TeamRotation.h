@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -25,6 +26,7 @@ struct KeyStep {
     std::string skill_name;
     std::string key_icon;
     int duration_ms = 1000;
+    std::string custom_icon;  // key_icon == "custom" 时使用
 };
 
 struct TeamRotation {
@@ -44,9 +46,9 @@ std::string InferKeyIcon(std::string_view key);
 // 按角色名查找角色视觉信息；找不到返回 nullptr
 const CharacterInfo* FindCharacter(const TeamRotation& rotation, std::string_view name);
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CharacterInfo, name, avatar_image, theme_color)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(StageMarker, label, color, start_step)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(KeyStep, character, key, skill_name, key_icon, duration_ms)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TeamRotation, name, background_image, characters, stages, steps)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CharacterInfo, name, avatar_image, theme_color)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(StageMarker, label, color, start_step)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(KeyStep, character, key, skill_name, key_icon, duration_ms, custom_icon)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TeamRotation, name, background_image, characters, stages, steps)
 
 } // namespace overlay::core

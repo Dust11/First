@@ -6,12 +6,13 @@
 #include "imgui.h"
 
 #include <functional>
+#include <string_view>
 #include <string>
 #include <vector>
 
 namespace overlay::editor {
 
-// 编辑器子组件：队伍流程管理、角色段编排、角色视觉信息编辑
+// 编辑器子组件：队伍流程管理、角色段编排、角色视觉信息、阶段标记、按键序列编辑
 class EditorComponents {
 public:
     EditorComponents() = default;
@@ -32,6 +33,8 @@ private:
                        const std::function<void()>& apply_callback);
     void DrawSegments(overlay::core::TeamRotation& rotation);
     void DrawCharacters(overlay::core::TeamRotation& rotation);
+    void DrawStages(overlay::core::TeamRotation& rotation);
+    void DrawKeySequence(overlay::core::TeamRotation& rotation);
 
     static std::vector<Segment> BuildSegments(
         const overlay::core::TeamRotation& rotation);
@@ -51,6 +54,8 @@ private:
     int selected_rotation_ = 0;
     int selected_segment_ = -1;
     int selected_character_ = -1;
+    int selected_stage_ = -1;
+    int selected_step_ = -1;
 
     bool renaming_ = false;
     int rename_index_ = -1;
@@ -60,6 +65,13 @@ private:
     char new_character_name_[256] = "\xe6\x96\xb0\xe8\xa7\x92\xe8\x89\xb2"; // "新角色"
     char new_segment_character_[256]{};
     bool show_new_segment_popup_ = false;
+
+    // 阶段 / 按键序列的延迟操作（避免在 clipper/循环中直接修改容器）
+    int stage_to_delete_ = -1;
+    int step_to_delete_ = -1;
+    int step_to_duplicate_ = -1;
+    int step_move_src_ = -1;
+    int step_move_dst_ = -1;
 };
 
 } // namespace overlay::editor

@@ -13,6 +13,24 @@ namespace overlay::editor {
 namespace {
 
 constexpr const char* kSegmentPayload = "SEGMENT_DND";
+constexpr const char* kStepPayload = "STEP_DND";
+
+struct IconOption {
+    const char* label;
+    const char* value;
+};
+
+constexpr IconOption kIconOptions[] = {
+    {"\xe8\x87\xaa\xe5\x8a\xa8\xe6\x8e\xa8\xe6\x96\xad", ""},
+    {"\xe9\xbc\xa0\xe6\xa0\x87\xe5\xb7\xa6\xe9\x94\xae", "mouse_left"},
+    {"\xe9\xbc\xa0\xe6\xa0\x87\xe5\xb7\xa6\xe9\x94\xae\xe9\x95\xbf\xe6\x8c\x89", "mouse_left_hold"},
+    {"\xe9\xbc\xa0\xe6\xa0\x87\xe5\x8f\xb3\xe9\x94\xae", "mouse_right"},
+    {"\xe9\xbc\xa0\xe6\xa0\x87\xe4\xb8\xad\xe9\x94\xae", "mouse_middle"},
+    {"\xe9\xbc\xa0\xe6\xa0\x87\xe4\xbe\xa7\xe9\x94\xae 1", "mouse_x1"},
+    {"\xe9\xbc\xa0\xe6\xa0\x87\xe4\xbe\xa7\xe9\x94\xae 2", "mouse_x2"},
+    {"\xe9\x94\xae\xe7\x9b\x98", "keyboard"},
+    {"\xe8\x87\xaa\xe5\xae\x9a\xe4\xb9\x89\xe5\x9b\xbe\xe6\xa0\x87", "custom"},
+};
 
 } // namespace
 
@@ -37,6 +55,8 @@ void EditorComponents::Draw(overlay::core::ConfigManager* config_manager,
     }
     if (selected_rotation_ < 0) selected_rotation_ = 0;
 
+    auto& rotation = cfg.rotations[selected_rotation_];
+
     ImGui::Begin("\xe9\x98\x9f\xe4\xbc\x8d\xe6\xb5\x81\xe7\xa8\x8b\xe7\xbc\x96\xe8\xbe\x91\xe5\x99\xa8"); // 队伍流程编辑器
     if (ImGui::BeginTable("editor_layout", 3,
                           ImGuiTableFlags_Resizable |
@@ -50,10 +70,33 @@ void EditorComponents::Draw(overlay::core::ConfigManager* config_manager,
         DrawRotations(cfg, config_manager, apply_callback);
 
         ImGui::TableNextColumn();
-        DrawSegments(cfg.rotations[selected_rotation_]);
+        DrawSegments(rotation);
 
         ImGui::TableNextColumn();
-        DrawCharacters(cfg.rotations[selected_rotation_]);
+        DrawCharacters(rotation);
+
+        ImGui::EndTable();
+    }
+
+    // 下方：阶段标记 + 按键序列
+    ImVec2 bottom_size = ImVec2(0.0f, ImGui::GetContentRegionAvail().y);
+    if (bottom_size.y > 0.0f &&
+        ImGui::BeginTable("editor_bottom", 2,
+                          ImGuiTableFlags_Resizable |
+                              ImGuiTableFlags_BordersInnerV |
+                              ImGuiTableFlags_SizingStretchProp,
+                          bottom_size)) {
+        ImGui::TableSetupColumn("\xe9\x98\xb6\xe6\xae\xb5\xe6\xa0\x87\xe8\xae\xb0",
+                                ImGuiTableColumnFlags_WidthStretch, 0.35f);
+        ImGui::TableSetupColumn("\xe6\x8c\x89\xe9\x94\xae\xe5\xba\x8f\xe5\x88\x97",
+                                ImGuiTableColumnFlags_WidthStretch, 0.65f);
+        ImGui::TableHeadersRow();
+
+        ImGui::TableNextColumn();
+        DrawStages(rotation);
+
+        ImGui::TableNextColumn();
+        DrawKeySequence(rotation);
 
         ImGui::EndTable();
     }
@@ -355,6 +398,309 @@ void EditorComponents::DrawCharacters(overlay::core::TeamRotation& rotation) {
                                      c.name));
             }
         }
+    }
+}
+
+void EditorComponents::DrawStages(overlay::core::TeamRotation& rotation) {
+    ImGui::TextUnformatted("\xe9\x98\xb6\xe6\xae\xb5\xe6\xa0\x87\xe8\xae\xb0"); // 阶段标记
+
+    if (ImGui::Button("\xe6\xb7\xbb\xe5\x8a\xa0\xe9\x98\xb6\xe6\xae\xb5")) { // 添加阶段
+        size_t start = (selected_step_ >= 0)
+                           ? static_cast<size_t>(selected_step_)
+                           : rotation.steps.size();
+        if (start > rotation.steps.size()) start = rotation.steps.size();
+        rotation.stages.push_back({"\xe6\x96\xb0\xe9\x98\xb6\xe6\xae\xb5", "", start}); // 新阶段
+        std::sort(rotation.stages.begin(), rotation.stages.end(),
+                  [](const overlay::core::StageMarker& a,
+                     const overlay::core::StageMarker& b) {
+                      return a.start_step < b.start_step;
+                  });
+        if (!rotation.stages.empty() && rotation.stages[0].start_step != 0) {
+            rotation.stages[0].start_step = 0;
+        }
+        selected_stage_ = -1;
+    }
+
+    ImGui::BeginChild("stage_list", ImVec2(0, ImGui::GetContentRegionAvail().y), true);
+    for (int i = 0; i < static_cast<int>(rotation.stages.size()); ++i) {
+        ImGui::PushID(i);
+        auto& stage = rotation.stages[i];
+
+        // 阶段名称
+        std::string label = stage.label;
+        label.resize(128);
+        if (ImGui::InputText("\xe5\x90\x8d\xe7\xa7\xb0", label.data(), label.size())) { // 名称
+            stage.label = label.c_str();
+        }
+
+        // 起始步骤
+        int start = static_cast<int>(stage.start_step);
+        if (ImGui::InputInt("\xe8\xb5\xb7\xe5\xa7\x8b\xe6\xad\xa5", &start)) { // 起始步
+            int max_step = static_cast<int>(rotation.steps.size());
+            start = std::clamp(start, 0, max_step);
+            stage.start_step = static_cast<size_t>(start);
+            std::sort(rotation.stages.begin(), rotation.stages.end(),
+                      [](const overlay::core::StageMarker& a,
+                         const overlay::core::StageMarker& b) {
+                          return a.start_step < b.start_step;
+                      });
+            if (!rotation.stages.empty() && rotation.stages[0].start_step != 0) {
+                rotation.stages[0].start_step = 0;
+            }
+            selected_stage_ = -1;
+        }
+
+        // 颜色覆盖
+        bool auto_color = stage.color.empty();
+        if (ImGui::Checkbox("\xe8\x87\xaa\xe5\x8a\xa8\xe9\xa2\x9c\xe8\x89\xb2", &auto_color)) { // 自动颜色
+            if (auto_color) {
+                stage.color.clear();
+            } else {
+                stage.color = "#888888";
+            }
+        }
+        if (!auto_color) {
+            ImVec4 col = HexToColor(stage.color);
+            if (ImGui::ColorEdit3("\xe9\xa2\x9c\xe8\x89\xb2", &col.x)) { // 颜色
+                stage.color = ColorToHex(col);
+            }
+        }
+
+        ImGui::SameLine();
+        if (ImGui::SmallButton("\xe5\x88\xa0\xe9\x99\xa4") && // 删除
+            rotation.stages.size() > 1) {
+            stage_to_delete_ = i;
+        }
+
+        ImGui::Separator();
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+
+    if (stage_to_delete_ >= 0) {
+        if (rotation.stages.size() > 1) {
+            rotation.stages.erase(rotation.stages.begin() + stage_to_delete_);
+            if (selected_stage_ == stage_to_delete_) selected_stage_ = -1;
+            else if (selected_stage_ > stage_to_delete_) --selected_stage_;
+        }
+        stage_to_delete_ = -1;
+    }
+}
+
+void EditorComponents::DrawKeySequence(overlay::core::TeamRotation& rotation) {
+    ImGui::Text("\xe6\x8c\x89\xe9\x94\xae\xe5\xba\x8f\xe5\x88\x97 (%zu \xe6\xad\xa5)", rotation.steps.size()); // 按键序列
+
+    if (ImGui::Button("\xe6\xb7\xbb\xe5\x8a\xa0\xe6\xad\xa5\xe9\xaa\xa4")) { // 添加步骤
+        overlay::core::KeyStep step;
+        if (selected_character_ >= 0 &&
+            selected_character_ < static_cast<int>(rotation.characters.size())) {
+            step.character = rotation.characters[selected_character_].name;
+        } else if (!rotation.steps.empty()) {
+            step.character = rotation.steps.back().character;
+        } else if (!rotation.characters.empty()) {
+            step.character = rotation.characters[0].name;
+        } else {
+            step.character = "\xe6\x96\xb0\xe8\xa7\x92\xe8\x89\xb2"; // 新角色
+        }
+        step.key = "LButton";
+        step.skill_name = "\xe6\x96\xb0\xe6\xad\xa5\xe9\xaa\xa4"; // 新步骤
+        step.duration_ms = 1000;
+
+        size_t insert_pos = rotation.steps.size();
+        if (selected_step_ >= 0 &&
+            selected_step_ < static_cast<int>(rotation.steps.size())) {
+            insert_pos = static_cast<size_t>(selected_step_) + 1;
+        }
+        rotation.steps.insert(rotation.steps.begin() + insert_pos, std::move(step));
+        selected_step_ = static_cast<int>(insert_pos);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("\xe5\x88\xa0\xe9\x99\xa4\xe9\x80\x89\xe4\xb8\xad") && // 删除选中
+        selected_step_ >= 0) {
+        step_to_delete_ = selected_step_;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("\xe5\xa4\x8d\xe5\x88\xb6\xe9\x80\x89\xe4\xb8\xad") && // 复制选中
+        selected_step_ >= 0) {
+        step_to_duplicate_ = selected_step_;
+    }
+
+    float table_height = ImGui::GetContentRegionAvail().y;
+    if (table_height < 100.0f) table_height = 100.0f;
+
+    ImGuiTableFlags table_flags = ImGuiTableFlags_Borders |
+                                  ImGuiTableFlags_Resizable |
+                                  ImGuiTableFlags_SizingStretchProp |
+                                  ImGuiTableFlags_ScrollY |
+                                  ImGuiTableFlags_RowBg;
+    if (ImGui::BeginTable("step_list", 8, table_flags,
+                          ImVec2(0.0f, table_height))) {
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 30.0f);
+        ImGui::TableSetupColumn("\xe8\xa7\x92\xe8\x89\xb2", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+        ImGui::TableSetupColumn("\xe6\x8c\x89\xe9\x94\xae", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+        ImGui::TableSetupColumn("\xe6\x8a\x80\xe8\x83\xbd", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("\xe5\x9b\xbe\xe6\xa0\x87", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+        ImGui::TableSetupColumn("\xe8\x87\xaa\xe5\xae\x9a\xe4\xb9\x89\xe5\x9b\xbe\xe6\xa0\x87",
+                                ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("\xe6\x8c\x81\xe7\xbb\xad(ms)", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+        ImGui::TableSetupColumn("\xe6\x93\x8d\xe4\xbd\x9c", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableHeadersRow();
+
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(rotation.steps.size()),
+                      ImGui::GetTextLineHeightWithSpacing());
+        while (clipper.Step()) {
+            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+                ImGui::TableNextRow();
+                ImGui::PushID(i);
+                auto& step = rotation.steps[i];
+
+                // # / 选择
+                ImGui::TableSetColumnIndex(0);
+                char idx_label[16];
+                std::snprintf(idx_label, sizeof(idx_label), "%03d", i + 1);
+                if (ImGui::Selectable(idx_label, selected_step_ == i,
+                                      ImGuiSelectableFlags_AllowOverlap)) {
+                    selected_step_ = i;
+                }
+                if (ImGui::BeginDragDropSource()) {
+                    int payload_idx = i;
+                    ImGui::SetDragDropPayload(kStepPayload, &payload_idx, sizeof(int));
+                    ImGui::Text("%s %s", step.character.c_str(), step.skill_name.c_str());
+                    ImGui::EndDragDropSource();
+                }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload =
+                            ImGui::AcceptDragDropPayload(kStepPayload)) {
+                        IM_ASSERT(payload->DataSize == sizeof(int));
+                        int src = *static_cast<const int*>(payload->Data);
+                        step_move_src_ = src;
+                        step_move_dst_ = i;
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+
+                // 角色
+                ImGui::TableSetColumnIndex(1);
+                const char* preview = step.character.c_str();
+                if (ImGui::BeginCombo("##char", preview)) {
+                    for (const auto& c : rotation.characters) {
+                        bool selected = (step.character == c.name);
+                        if (ImGui::Selectable(c.name.c_str(), selected)) {
+                            step.character = c.name;
+                        }
+                        if (selected) ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+
+                // 按键
+                ImGui::TableSetColumnIndex(2);
+                std::string key = step.key;
+                key.resize(64);
+                if (ImGui::InputText("##key", key.data(), key.size())) {
+                    step.key = key.c_str();
+                }
+
+                // 技能名
+                ImGui::TableSetColumnIndex(3);
+                std::string skill = step.skill_name;
+                skill.resize(128);
+                if (ImGui::InputText("##skill", skill.data(), skill.size())) {
+                    step.skill_name = skill.c_str();
+                }
+
+                // 图标类型
+                ImGui::TableSetColumnIndex(4);
+                int icon_index = 0;
+                for (int k = 0; k < IM_ARRAYSIZE(kIconOptions); ++k) {
+                    if (step.key_icon == kIconOptions[k].value) {
+                        icon_index = k;
+                        break;
+                    }
+                }
+                if (ImGui::Combo("##icon", &icon_index, [](void* data, int idx) {
+                        auto* opts = static_cast<const IconOption*>(data);
+                        return opts[idx].label;
+                    },
+                    const_cast<void*>(static_cast<const void*>(kIconOptions)),
+                    IM_ARRAYSIZE(kIconOptions))) {
+                    step.key_icon = kIconOptions[icon_index].value;
+                }
+
+                // 自定义图标路径
+                ImGui::TableSetColumnIndex(5);
+                bool is_custom = (step.key_icon == "custom");
+                ImGui::BeginDisabled(!is_custom);
+                std::string custom = step.custom_icon;
+                custom.resize(256);
+                if (ImGui::InputText("##custom", custom.data(), custom.size())) {
+                    step.custom_icon = custom.c_str();
+                }
+                ImGui::EndDisabled();
+
+                // 持续时间
+                ImGui::TableSetColumnIndex(6);
+                int duration = step.duration_ms;
+                if (ImGui::InputInt("##dur", &duration)) {
+                    step.duration_ms = std::max(duration, 100);
+                }
+
+                // 操作
+                ImGui::TableSetColumnIndex(7);
+                if (ImGui::SmallButton("\xe5\x88\xa0")) { // 删
+                    step_to_delete_ = i;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("\xe5\xa4\x8d")) { // 复
+                    step_to_duplicate_ = i;
+                }
+
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndTable();
+    }
+
+    // 处理延迟操作
+    if (step_to_delete_ >= 0 &&
+        step_to_delete_ < static_cast<int>(rotation.steps.size())) {
+        rotation.steps.erase(rotation.steps.begin() + step_to_delete_);
+        if (selected_step_ == step_to_delete_) selected_step_ = -1;
+        else if (selected_step_ > step_to_delete_) --selected_step_;
+        step_to_delete_ = -1;
+    }
+
+    if (step_to_duplicate_ >= 0 &&
+        step_to_duplicate_ < static_cast<int>(rotation.steps.size())) {
+        const auto& src = rotation.steps[step_to_duplicate_];
+        rotation.steps.insert(rotation.steps.begin() + step_to_duplicate_ + 1, src);
+        if (selected_step_ == step_to_duplicate_) selected_step_ = step_to_duplicate_ + 1;
+        else if (selected_step_ > step_to_duplicate_) ++selected_step_;
+        step_to_duplicate_ = -1;
+    }
+
+    if (step_move_src_ >= 0 && step_move_dst_ >= 0 &&
+        step_move_src_ < static_cast<int>(rotation.steps.size()) &&
+        step_move_dst_ < static_cast<int>(rotation.steps.size()) &&
+        step_move_src_ != step_move_dst_) {
+        size_t src = static_cast<size_t>(step_move_src_);
+        size_t dst = static_cast<size_t>(step_move_dst_);
+        auto item = std::move(rotation.steps[src]);
+        if (src < dst) {
+            std::move(rotation.steps.begin() + src + 1,
+                      rotation.steps.begin() + dst + 1,
+                      rotation.steps.begin() + src);
+        } else {
+            std::move(rotation.steps.begin() + dst,
+                      rotation.steps.begin() + src,
+                      rotation.steps.begin() + dst + 1);
+        }
+        rotation.steps[dst] = std::move(item);
+        selected_step_ = static_cast<int>(dst);
+        step_move_src_ = -1;
+        step_move_dst_ = -1;
     }
 }
 
