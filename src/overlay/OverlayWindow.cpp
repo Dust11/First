@@ -209,6 +209,12 @@ LRESULT OverlayWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
 
+    case WM_HOTKEY:
+        if (hotkey_callback_) {
+            hotkey_callback_(wParam);
+        }
+        return 0;
+
     case WM_KEYUP:
     case WM_SYSKEYDOWN:
     case WM_SYSKEYUP:

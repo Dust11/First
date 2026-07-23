@@ -81,6 +81,24 @@ void PlaybackEngine::Update(float dt_ms) {
     }
 }
 
+void PlaybackEngine::NextStep() {
+    if (!rotation_ || rotation_->steps.empty()) return;
+
+    current_step_++;
+    elapsed_ms_ = 0.0f;
+
+    if (current_step_ >= rotation_->steps.size()) {
+        if (loop_enabled_) {
+            current_step_ = 0;
+            LOG_INFO("Rotation looped (key advance).");
+        } else {
+            current_step_ = rotation_->steps.size() - 1;
+            state_ = PlaybackState::Finished;
+            LOG_INFO("Rotation finished (key advance).");
+        }
+    }
+}
+
 float PlaybackEngine::CurrentStepProgress() const {
     if (!rotation_ || rotation_->steps.empty()) return 0.0f;
     const int duration_ms = rotation_->steps[current_step_].duration_ms;

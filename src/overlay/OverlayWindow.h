@@ -44,6 +44,10 @@ public:
     using KeyEventCallback = std::function<void(UINT msg, WPARAM wParam, LPARAM lParam)>;
     void SetKeyEventCallback(KeyEventCallback cb) { key_event_callback_ = std::move(cb); }
 
+    // WM_HOTKEY 消息回调
+    using HotkeyMessageCallback = std::function<void(WPARAM wParam)>;
+    void SetHotkeyMessageCallback(HotkeyMessageCallback cb) { hotkey_callback_ = std::move(cb); }
+
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
     LRESULT HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
@@ -68,6 +72,7 @@ private:
     POINT drag_start_window_pos_{};
 
     KeyEventCallback key_event_callback_;
+    HotkeyMessageCallback hotkey_callback_;
 };
 
 } // namespace overlay::overlay

@@ -22,8 +22,11 @@ public:
     void PlayPause();
     void Reset();
 
-    // 以毫秒为单位的帧时间推进播放进度
+    // 以毫秒为单位的帧时间推进播放进度（自动播放模式）
     void Update(float dt_ms);
+
+    // 按键检测模式：手动前进一步
+    void NextStep();
 
     PlaybackState GetState() const { return state_; }
     size_t CurrentStep() const { return current_step_; }
