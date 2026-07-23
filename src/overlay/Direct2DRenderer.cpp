@@ -1,6 +1,7 @@
 #include "overlay/Direct2DRenderer.h"
 
 #include "utils/Logger.h"
+#include "utils/ResourceLoader.h"
 
 #include <algorithm>
 #include <format>
@@ -20,6 +21,23 @@ std::string HResultToString(HRESULT hr) {
     return std::format("HRESULT=0x{:08X}", static_cast<uint32_t>(hr));
 }
 
+D2D1_COLOR_F ToD2DColor(const Color& c) {
+    return D2D1::ColorF(c.r, c.g, c.b, c.a);
+}
+
+D2D1_RECT_F ToD2DRect(const Rect& r) {
+    return D2D1::RectF(r.x, r.y, r.x + r.w, r.y + r.h);
+}
+
+D2D1_ROUNDED_RECT ToD2DRoundedRect(const RoundedRect& rr) {
+    D2D1_RECT_F rect = ToD2DRect(rr);
+    return D2D1::RoundedRect(rect, rr.radius_x, rr.radius_y);
+}
+
+D2D1_ELLIPSE ToD2DEllipse(const Ellipse& e) {
+    return D2D1::Ellipse(D2D1::Point2F(e.center.x, e.center.y), e.radius_x, e.radius_y);
+}
+
 } // namespace
 
 Direct2DRenderer::Direct2DRenderer() = default;
@@ -35,6 +53,7 @@ bool Direct2DRenderer::Initialize(HWND hwnd) {
     if (!CreateD3DDevice()) return false;
     if (!CreateSwapChain()) return false;
     if (!CreateD2DResources()) return false;
+    if (!CreateDWriteFactory()) return false;
     if (!CreateDCompResources()) return false;
     if (!CreateRenderTargetBitmap()) return false;
 
@@ -48,6 +67,10 @@ void Direct2DRenderer::Shutdown() {
 }
 
 void Direct2DRenderer::ReleaseResources() {
+    text_formats_.clear();
+    bitmaps_.clear();
+    dwrite_factory_.Reset();
+    d2d_layer_.Reset();
     d2d_target_bitmap_.Reset();
     d2d_context_.Reset();
     d2d_device_.Reset();
@@ -187,6 +210,25 @@ bool Direct2DRenderer::CreateD2DResources() {
         return false;
     }
 
+    hr = d2d_context_->CreateLayer(nullptr, d2d_layer_.GetAddressOf());
+    if (FAILED(hr)) {
+        LOG_ERROR(std::format("ID2D1DeviceContext::CreateLayer failed: {}",
+                              HResultToString(hr)));
+        return false;
+    }
+
+    return true;
+}
+
+bool Direct2DRenderer::CreateDWriteFactory() {
+    HRESULT hr = DWriteCreateFactory(
+        DWRITE_FACTORY_TYPE_SHARED,
+        __uuidof(IDWriteFactory),
+        reinterpret_cast<IUnknown**>(dwrite_factory_.GetAddressOf()));
+    if (FAILED(hr)) {
+        LOG_ERROR(std::format("DWriteCreateFactory failed: {}", HResultToString(hr)));
+        return false;
+    }
     return true;
 }
 
@@ -299,7 +341,8 @@ void Direct2DRenderer::BeginDraw() {
     if (!d2d_context_) return;
 
     if (waitable_object_) {
-        WaitForSingleObject(waitable_object_, INFINITE);
+        // 使用超时等待避免渲染线程在退出时无限阻塞
+        WaitForSingleObject(waitable_object_, 50);
     }
 
     d2d_context_->BeginDraw();
@@ -334,7 +377,7 @@ void Direct2DRenderer::Resize(int width, int height) {
 
     if (!swap_chain_) return;
 
-    // 原子大小策略：不调用 ResizeBuffers，只更新 DComp clip 和目标位图
+    // Atomic size strategy: do not call ResizeBuffers, only update DComp clip and target bitmap
     d2d_target_bitmap_.Reset();
     if (!CreateRenderTargetBitmap()) {
         LOG_ERROR("Failed to recreate render target bitmap after resize.");
@@ -360,6 +403,224 @@ void Direct2DRenderer::SetVisible(bool visible) {
     if (dcomp_device_) {
         dcomp_device_->Commit();
     }
+}
+
+// ============================================================================
+// IRenderer implementation
+// ============================================================================
+
+void Direct2DRenderer::Clear(const Color& color) {
+    if (!d2d_context_) return;
+    d2d_context_->Clear(ToD2DColor(color));
+}
+
+void Direct2DRenderer::PushAxisAlignedClip(const Rect& rect) {
+    if (!d2d_context_) return;
+    D2D1_RECT_F r = ToD2DRect(rect);
+    d2d_context_->PushAxisAlignedClip(&r, D2D1_ANTIALIAS_MODE_ALIASED);
+}
+
+void Direct2DRenderer::PopAxisAlignedClip() {
+    if (d2d_context_) d2d_context_->PopAxisAlignedClip();
+}
+
+void Direct2DRenderer::PushLayer(const Ellipse& clip_ellipse) {
+    if (!d2d_context_ || !d2d_factory_ || !d2d_layer_) return;
+
+    D2D1_ELLIPSE d2d_ellipse = ToD2DEllipse(clip_ellipse);
+
+    Microsoft::WRL::ComPtr<ID2D1EllipseGeometry> ellipse_geo;
+    HRESULT hr = d2d_factory_->CreateEllipseGeometry(d2d_ellipse, ellipse_geo.GetAddressOf());
+    if (FAILED(hr)) return;
+
+    D2D1_LAYER_PARAMETERS1 params = D2D1::LayerParameters1();
+    params.geometricMask = ellipse_geo.Get();
+    params.maskAntialiasMode = D2D1_ANTIALIAS_MODE_PER_PRIMITIVE;
+
+    d2d_context_->PushLayer(&params, d2d_layer_.Get());
+}
+
+void Direct2DRenderer::PopLayer() {
+    if (d2d_context_) d2d_context_->PopLayer();
+}
+
+void Direct2DRenderer::FillRect(const Rect& rect, const Color& color) {
+    if (!d2d_context_) return;
+    D2D1_RECT_F r = ToD2DRect(rect);
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    d2d_context_->CreateSolidColorBrush(ToD2DColor(color), brush.GetAddressOf());
+    d2d_context_->FillRectangle(&r, brush.Get());
+}
+
+void Direct2DRenderer::DrawRect(const Rect& rect, const Color& color, float stroke_width) {
+    if (!d2d_context_) return;
+    D2D1_RECT_F r = ToD2DRect(rect);
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    d2d_context_->CreateSolidColorBrush(ToD2DColor(color), brush.GetAddressOf());
+    d2d_context_->DrawRectangle(&r, brush.Get(), stroke_width);
+}
+
+void Direct2DRenderer::FillRoundedRect(const RoundedRect& rr, const Color& color) {
+    if (!d2d_context_) return;
+    D2D1_ROUNDED_RECT r = ToD2DRoundedRect(rr);
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    d2d_context_->CreateSolidColorBrush(ToD2DColor(color), brush.GetAddressOf());
+    d2d_context_->FillRoundedRectangle(r, brush.Get());
+}
+
+void Direct2DRenderer::DrawRoundedRect(const RoundedRect& rr, const Color& color, float stroke_width) {
+    if (!d2d_context_) return;
+    D2D1_ROUNDED_RECT r = ToD2DRoundedRect(rr);
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    d2d_context_->CreateSolidColorBrush(ToD2DColor(color), brush.GetAddressOf());
+    d2d_context_->DrawRoundedRectangle(r, brush.Get(), stroke_width);
+}
+
+void Direct2DRenderer::FillEllipse(const Ellipse& ellipse, const Color& color) {
+    if (!d2d_context_) return;
+    D2D1_ELLIPSE e = ToD2DEllipse(ellipse);
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    d2d_context_->CreateSolidColorBrush(ToD2DColor(color), brush.GetAddressOf());
+    d2d_context_->FillEllipse(e, brush.Get());
+}
+
+void Direct2DRenderer::DrawEllipse(const Ellipse& ellipse, const Color& color, float stroke_width) {
+    if (!d2d_context_) return;
+    D2D1_ELLIPSE e = ToD2DEllipse(ellipse);
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    d2d_context_->CreateSolidColorBrush(ToD2DColor(color), brush.GetAddressOf());
+    d2d_context_->DrawEllipse(e, brush.Get(), stroke_width);
+}
+
+void Direct2DRenderer::DrawLine(const Point& p0, const Point& p1, const Color& color, float stroke_width) {
+    if (!d2d_context_) return;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    d2d_context_->CreateSolidColorBrush(ToD2DColor(color), brush.GetAddressOf());
+    d2d_context_->DrawLine(
+        D2D1::Point2F(p0.x, p0.y),
+        D2D1::Point2F(p1.x, p1.y),
+        brush.Get(), stroke_width);
+}
+
+TextFormatHandle Direct2DRenderer::CreateTextFormat(const std::wstring& font_family,
+                                                      float font_size, bool bold) {
+    if (!dwrite_factory_) return 0;
+
+    DWRITE_FONT_WEIGHT weight = bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL;
+
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
+    HRESULT hr = dwrite_factory_->CreateTextFormat(
+        font_family.c_str(),
+        nullptr,
+        weight,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        font_size,
+        L"zh-cn",
+        format.GetAddressOf());
+    if (FAILED(hr)) return 0;
+
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+
+    for (size_t i = 0; i < text_formats_.size(); ++i) {
+        if (!text_formats_[i].format) {
+            text_formats_[i].format = format;
+            return static_cast<TextFormatHandle>(i + 1);
+        }
+    }
+    text_formats_.push_back({format});
+    return static_cast<TextFormatHandle>(text_formats_.size());
+}
+
+void Direct2DRenderer::ReleaseTextFormat(TextFormatHandle handle) {
+    if (handle == 0 || handle > text_formats_.size()) return;
+    text_formats_[handle - 1].format.Reset();
+}
+
+IDWriteTextFormat* Direct2DRenderer::GetTextFormat(TextFormatHandle handle) const {
+    if (handle == 0 || handle > text_formats_.size()) return nullptr;
+    return text_formats_[handle - 1].format.Get();
+}
+
+void Direct2DRenderer::DrawString(TextFormatHandle handle, const wchar_t* text, size_t length,
+                                const Rect& rect, const Color& color, bool hcenter, bool vcenter) {
+    IDWriteTextFormat* format = GetTextFormat(handle);
+    if (!format || !d2d_context_ || !dwrite_factory_) return;
+
+    UINT32 len = static_cast<UINT32>(length);
+    Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+    HRESULT hr = dwrite_factory_->CreateTextLayout(
+        text, len, format, rect.w, rect.h, layout.GetAddressOf());
+    if (FAILED(hr)) return;
+
+    if (hcenter) {
+        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    } else {
+        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    }
+
+    if (vcenter) {
+        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    } else {
+        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    }
+
+    DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+    layout->SetTrimming(&trimming, nullptr);
+
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    d2d_context_->CreateSolidColorBrush(ToD2DColor(color), brush.GetAddressOf());
+    d2d_context_->DrawTextLayout(
+        D2D1::Point2F(rect.x, rect.y), layout.Get(), brush.Get());
+}
+
+BitmapHandle Direct2DRenderer::CreateBitmapFromImageData(const ::overlay::utils::ImageData& image_data) {
+    if (!d2d_context_) return 0;
+
+    D2D1_BITMAP_PROPERTIES props{};
+    props.pixelFormat.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    props.pixelFormat.alphaMode = D2D1_ALPHA_MODE_STRAIGHT;
+    props.dpiX = 96.0f;
+    props.dpiY = 96.0f;
+
+    Microsoft::WRL::ComPtr<ID2D1Bitmap> bitmap;
+    HRESULT hr = d2d_context_->CreateBitmap(
+        D2D1::SizeU(image_data.width, image_data.height),
+        image_data.pixels.data(),
+        image_data.pitch,
+        &props,
+        bitmap.GetAddressOf());
+    if (FAILED(hr)) {
+        LOG_ERROR(std::format("CreateBitmap from image data failed: {}", HResultToString(hr)));
+        return 0;
+    }
+
+    for (size_t i = 0; i < bitmaps_.size(); ++i) {
+        if (!bitmaps_[i].bitmap) {
+            bitmaps_[i].bitmap = bitmap;
+            return static_cast<BitmapHandle>(i + 1);
+        }
+    }
+    bitmaps_.push_back({bitmap});
+    return static_cast<BitmapHandle>(bitmaps_.size());
+}
+
+void Direct2DRenderer::ReleaseBitmap(BitmapHandle handle) {
+    if (handle == 0 || handle > bitmaps_.size()) return;
+    bitmaps_[handle - 1].bitmap.Reset();
+}
+
+ID2D1Bitmap* Direct2DRenderer::GetBitmap(BitmapHandle handle) const {
+    if (handle == 0 || handle > bitmaps_.size()) return nullptr;
+    return bitmaps_[handle - 1].bitmap.Get();
+}
+
+void Direct2DRenderer::DrawBitmap(BitmapHandle handle, const Rect& dest_rect, float opacity) {
+    ID2D1Bitmap* bitmap = GetBitmap(handle);
+    if (!bitmap || !d2d_context_) return;
+    D2D1_RECT_F r = ToD2DRect(dest_rect);
+    d2d_context_->DrawBitmap(bitmap, &r, opacity,
+                             D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, nullptr);
 }
 
 } // namespace overlay::overlay

@@ -37,10 +37,16 @@ public:
     void PostQuit();
 
     HWND GetHwnd() const { return hwnd_; }
+    int GetClientWidth() const;
+    int GetClientHeight() const;
 
     // 按键/窗口事件回调，由 PlaybackEngine/KeyDetector 注册
     using KeyEventCallback = std::function<void(UINT msg, WPARAM wParam, LPARAM lParam)>;
     void SetKeyEventCallback(KeyEventCallback cb) { key_event_callback_ = std::move(cb); }
+
+    // WM_HOTKEY 消息回调
+    using HotkeyMessageCallback = std::function<void(WPARAM wParam)>;
+    void SetHotkeyMessageCallback(HotkeyMessageCallback cb) { hotkey_callback_ = std::move(cb); }
 
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -66,6 +72,7 @@ private:
     POINT drag_start_window_pos_{};
 
     KeyEventCallback key_event_callback_;
+    HotkeyMessageCallback hotkey_callback_;
 };
 
 } // namespace overlay::overlay

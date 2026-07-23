@@ -4,11 +4,14 @@
 
 #include <d2d1_2.h>
 #include <dcomp.h>
+#include <dwrite.h>
 #include <dxgi1_2.h>
 #include <d3d11_1.h>
 #include <wrl/client.h>
 
 #include <windows.h>
+
+#include <vector>
 
 namespace overlay::overlay {
 
@@ -23,11 +26,11 @@ public:
     bool Initialize(HWND hwnd);
     void Shutdown();
 
-    // 设备丢失检测与恢复
+    // Device lost detection and recovery
     bool CheckDeviceLost();
     bool RecreateDeviceResources();
 
-    // 渲染帧
+    // Render frame
     void BeginDraw();
     void EndDraw();
     void Present();
@@ -38,22 +41,48 @@ public:
     ID2D1DeviceContext* GetContext() const { return d2d_context_.Get(); }
     ID3D11Device* GetD3DDevice() const { return d3d_device_.Get(); }
 
+    // --- IRenderer implementation ---
+    void Clear(const Color& color) override;
+    void PushAxisAlignedClip(const Rect& rect) override;
+    void PopAxisAlignedClip() override;
+    void PushLayer(const Ellipse& clip_ellipse) override;
+    void PopLayer() override;
+    void FillRect(const Rect& rect, const Color& color) override;
+    void DrawRect(const Rect& rect, const Color& color, float stroke_width) override;
+    void FillRoundedRect(const RoundedRect& rr, const Color& color) override;
+    void DrawRoundedRect(const RoundedRect& rr, const Color& color, float stroke_width) override;
+    void FillEllipse(const Ellipse& ellipse, const Color& color) override;
+    void DrawEllipse(const Ellipse& ellipse, const Color& color, float stroke_width) override;
+    void DrawLine(const Point& p0, const Point& p1, const Color& color, float stroke_width) override;
+    TextFormatHandle CreateTextFormat(const std::wstring& font_family, float font_size, bool bold) override;
+    void ReleaseTextFormat(TextFormatHandle handle) override;
+    void DrawString(TextFormatHandle format, const wchar_t* text, size_t length,
+                  const Rect& rect, const Color& color, bool hcenter, bool vcenter) override;
+    BitmapHandle CreateBitmapFromImageData(const ::overlay::utils::ImageData& image_data) override;
+    void ReleaseBitmap(BitmapHandle handle) override;
+    void DrawBitmap(BitmapHandle handle, const Rect& dest_rect, float opacity) override;
+    void* GetRawContext() override { return d2d_context_.Get(); }
+
 private:
     bool CreateD3DDevice();
     bool CreateSwapChain();
     bool CreateD2DResources();
     bool CreateDCompResources();
     bool CreateRenderTargetBitmap();
+    bool CreateDWriteFactory();
     void ReleaseResources();
 
     bool UpdateCompositionClip();
+
+    IDWriteTextFormat* GetTextFormat(TextFormatHandle handle) const;
+    ID2D1Bitmap* GetBitmap(BitmapHandle handle) const;
 
     HWND hwnd_ = nullptr;
     int width_ = 0;
     int height_ = 0;
     bool visible_ = true;
 
-    // 原子大小交换链：创建时取显示器最大分辨率，后续用 clip 控制
+    // Atomic size swap chain: created at max display resolution, clip controls visible area
     int max_width_ = 0;
     int max_height_ = 0;
 
@@ -70,10 +99,22 @@ private:
     Microsoft::WRL::ComPtr<ID2D1Device1> d2d_device_;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> d2d_context_;
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> d2d_target_bitmap_;
+    Microsoft::WRL::ComPtr<ID2D1Layer> d2d_layer_;
 
     Microsoft::WRL::ComPtr<IDCompositionDevice> dcomp_device_;
     Microsoft::WRL::ComPtr<IDCompositionTarget> dcomp_target_;
     Microsoft::WRL::ComPtr<IDCompositionVisual> dcomp_visual_;
+
+    Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_factory_;
+
+    struct TextFormatSlot {
+        Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
+    };
+    struct BitmapSlot {
+        Microsoft::WRL::ComPtr<ID2D1Bitmap> bitmap;
+    };
+    std::vector<TextFormatSlot> text_formats_;
+    std::vector<BitmapSlot> bitmaps_;
 };
 
 } // namespace overlay::overlay

@@ -118,6 +118,20 @@ void OverlayWindow::SetScale(float scale) {
     SetSize(new_w, new_h);
 }
 
+int OverlayWindow::GetClientWidth() const {
+    if (!hwnd_) return width_;
+    RECT rc{};
+    GetClientRect(hwnd_, &rc);
+    return rc.right - rc.left;
+}
+
+int OverlayWindow::GetClientHeight() const {
+    if (!hwnd_) return height_;
+    RECT rc{};
+    GetClientRect(hwnd_, &rc);
+    return rc.bottom - rc.top;
+}
+
 void OverlayWindow::SetMoveMode(bool enabled) {
     if (move_mode_ == enabled) return;
     move_mode_ = enabled;
@@ -175,6 +189,11 @@ LRESULT OverlayWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         PostQuitMessage(0);
         return 0;
 
+    case WM_CLOSE:
+        LOG_INFO("OverlayWindow received WM_CLOSE, destroying window.");
+        DestroyWindow(hwnd_);
+        return 0;
+
     case WM_DPICHANGED: {
         // 高 DPI 变更：使用系统建议矩形
         auto* const rect = reinterpret_cast<RECT*>(lParam);
@@ -192,6 +211,12 @@ LRESULT OverlayWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         if (key_event_callback_) {
             key_event_callback_(msg, wParam, lParam);
+        }
+        return 0;
+
+    case WM_HOTKEY:
+        if (hotkey_callback_) {
+            hotkey_callback_(wParam);
         }
         return 0;
 
