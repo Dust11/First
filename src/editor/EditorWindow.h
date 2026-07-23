@@ -1,9 +1,14 @@
 #pragma once
 
+#include "core/ConfigManager.h"
+#include "editor/EditorComponents.h"
+
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
 #include <windows.h>
+
+#include <functional>
 
 namespace overlay::editor {
 
@@ -19,6 +24,9 @@ public:
     // device: 与 overlay D2D 渲染器共享的 D3D11 设备。
     bool Initialize(HWND overlay_hwnd, ID3D11Device* device);
     void Shutdown();
+
+    void SetConfigManager(overlay::core::ConfigManager* config_manager);
+    void SetApplyCallback(std::function<void()> callback);
 
     void Show();
     void Hide();
@@ -50,8 +58,13 @@ private:
     bool initialized_ = false;
     bool open_ = false;
     bool pending_show_ = false;
+    bool imgui_backends_initialized_ = false;
     int width_ = 1000;
     int height_ = 700;
+
+    overlay::core::ConfigManager* config_manager_ = nullptr;
+    std::function<void()> apply_callback_;
+    EditorComponents components_;
 };
 
 } // namespace overlay::editor

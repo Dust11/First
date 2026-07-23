@@ -31,6 +31,9 @@ public:
     // 创建 WIC 成像工厂。调用方需先初始化 COM（CoInitializeEx）。
     bool Initialize();
 
+    // 在 CoUninitialize 之前主动释放 WIC 工厂，避免 COM 已卸载后释放对象崩溃。
+    void Shutdown() { wic_factory_.Reset(); }
+
     // 从绝对路径加载图片（PNG/JPG/BMP 等 WIC 支持的格式）。
     // 失败时返回 std::nullopt 并记录日志。
     std::optional<ImageData> LoadImage(const std::filesystem::path& path);

@@ -220,8 +220,11 @@ bool EditorWindow::Initialize(HWND overlay_hwnd, ID3D11Device* device) {
 void EditorWindow::Shutdown() {
     if (!initialized_) return;
 
-    ImGui_ImplDX11_Shutdown();
-    ImGui_ImplWin32_Shutdown();
+    if (imgui_backends_initialized_) {
+        ImGui_ImplDX11_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        imgui_backends_initialized_ = false;
+    }
     ImGui::DestroyContext();
 
     if (rtv_) {
@@ -248,6 +251,14 @@ void EditorWindow::Shutdown() {
 
     initialized_ = false;
     open_ = false;
+}
+
+void EditorWindow::SetConfigManager(overlay::core::ConfigManager* config_manager) {
+    config_manager_ = config_manager;
+}
+
+void EditorWindow::SetApplyCallback(std::function<void()> callback) {
+    apply_callback_ = std::move(callback);
 }
 
 void EditorWindow::Show() {
@@ -279,6 +290,7 @@ bool EditorWindow::RenderFrame() {
         }
         ImGui_ImplWin32_Init(hwnd_);
         ImGui_ImplDX11_Init(d3d_device_, d3d_context_);
+        imgui_backends_initialized_ = true;
         CreateSwapChain();
         ShowWindow(hwnd_, SW_SHOWNA);
         pending_show_ = false;
@@ -296,9 +308,9 @@ bool EditorWindow::RenderFrame() {
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
 
-    // 任务 15-17：在这里绘制编辑器 UI
+    // 任务 15：编辑器 UI
     ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
-    ImGui::ShowDemoWindow();
+    components_.Draw(config_manager_, apply_callback_);
 
     ImGui::Render();
 

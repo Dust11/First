@@ -468,6 +468,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
 
     // 初始化编辑器窗口（延迟到首次打开时再创建 D3D/ImGui 资源）
     editor.Initialize(hwnd, renderer.GetD3DDevice());
+    editor.SetConfigManager(&config_manager);
+    editor.SetApplyCallback([&ctx]() {
+        ApplyActiveRotation(ctx);
+        SwitchKeyDetector(ctx);
+        if (ctx.hotkey_manager && ctx.window) {
+            ctx.hotkey_manager->UnregisterAll();
+            try {
+                ctx.hotkey_manager->RegisterFromConfig(
+                    ctx.config_manager->GetConfig().settings.at("hotkeys"),
+                    ctx.window->GetHwnd());
+            } catch (...) {
+                LOG_ERROR("Failed to re-register hotkeys after editor save.");
+            }
+        }
+    });
 
     // 初始化播放引擎与按键检测器
     ApplyActiveRotation(ctx);
@@ -483,16 +498,26 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     std::thread render_thread(RenderLoop, std::ref(ctx));
 
     window.RunMessageLoop();
+    LOG_INFO("Message loop exited.");
 
     ctx.running.store(false, std::memory_order_release);
+    LOG_INFO("Waiting for render thread...");
     render_thread.join();
+    LOG_INFO("Render thread joined.");
+    LOG_INFO("Waiting for timer thread...");
     timer.join();
+    LOG_INFO("Timer thread joined.");
 
     if (ctx.active_detector == &ctx.polling_detector) {
         ctx.polling_detector.Stop();
     }
+    LOG_INFO("Unregistering hotkeys...");
     hotkey_manager.UnregisterAll();
+    LOG_INFO("Shutting down editor...");
     editor.Shutdown();
+    renderer.Shutdown();
+    window.Destroy();
+    resource_loader.Shutdown();
 
     LOG_INFO("Application exiting.");
     CoUninitialize();

@@ -186,12 +186,16 @@ LRESULT CALLBACK OverlayWindow::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
 LRESULT OverlayWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_DESTROY:
+        LOG_INFO("OverlayWindow destroyed, posting WM_QUIT.");
         PostQuitMessage(0);
         return 0;
 
     case WM_CLOSE:
         LOG_INFO("OverlayWindow received WM_CLOSE, destroying window.");
-        DestroyWindow(hwnd_);
+        if (!DestroyWindow(hwnd_)) {
+            LOG_ERROR(std::format("DestroyWindow failed, error={}", GetLastError()));
+        }
+        PostQuitMessage(0);
         return 0;
 
     case WM_DPICHANGED: {
