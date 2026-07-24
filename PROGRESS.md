@@ -106,7 +106,7 @@
   - 临时开启编辑器自动显示运行 5 秒退出码 `exit=0`（已回退）。
 
 ### Task 20：测试、打包与 README 完善
-- 状态：已完成（待推送）。
+- 状态：已完成并已推送（commit `5ccf44b`，已推送到 `feat/implementation`）。
 - 主要内容：
   1. 移除 `src/main.cpp` 中无条件 5s 自动关闭计时器；新增 `--smoke-test` CLI 参数，2 秒自动退出用于 CI/本地验证。
   2. `CMakeLists.txt` 追加 CPack ZIP 配置；`cpack -G ZIP -C Release` 生成绿色包 `MingCKeyOverlay-0.1.0-win64.zip`。
@@ -125,11 +125,11 @@
 
 ## 未推送提交
 
-Task 20 改动尚未提交与推送。
+无。
 
 ## 待办任务
 
-- [ ] 提交并推送 Task 20。
+无。
 
 ## 关键命令备忘
 
