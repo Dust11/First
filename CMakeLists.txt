@@ -59,6 +59,7 @@ set(SOURCES
     src/utils/TextEncoding.cpp
     src/utils/ResourceLoader.cpp
     src/utils/HotkeyManager.cpp
+    src/utils/FileWatcher.cpp
     src/core/TeamRotation.cpp
     src/core/ConfigManager.cpp
     src/core/PlaybackEngine.cpp
@@ -75,6 +76,7 @@ set(HEADERS
     src/utils/TextEncoding.h
     src/utils/ResourceLoader.h
     src/utils/HotkeyManager.h
+    src/utils/FileWatcher.h
     src/core/TeamRotation.h
     src/core/ConfigManager.h
     src/core/PlaybackEngine.h
@@ -114,6 +116,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     winmm
     imm32
     version
+    comctl32
 )
 
 # 复制 profiles/ 与 assets/ 到输出目录

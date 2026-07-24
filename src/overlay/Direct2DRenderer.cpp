@@ -4,7 +4,14 @@
 #include "utils/ResourceLoader.h"
 
 #include <algorithm>
+#include <d2d1effects.h>
 #include <format>
+
+// Manually define CLSID_D2D1Scale to avoid initguid.h side effects.
+// {9DAF9369-3846-4D0E-A44E-0C607934A5D7}
+static const GUID CLSID_D2D1Scale_Local =
+    {0x9daf9369, 0x3846, 0x4d0e, {0xa4, 0x4e, 0x0c, 0x60, 0x79, 0x34, 0xa5, 0xd7}};
+#define CLSID_D2D1Scale CLSID_D2D1Scale_Local
 
 namespace overlay::overlay {
 
@@ -621,6 +628,35 @@ void Direct2DRenderer::DrawBitmap(BitmapHandle handle, const Rect& dest_rect, fl
     D2D1_RECT_F r = ToD2DRect(dest_rect);
     d2d_context_->DrawBitmap(bitmap, &r, opacity,
                              D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, nullptr);
+}
+
+void Direct2DRenderer::DrawBitmapHighQuality(
+        BitmapHandle handle, const Rect& dest_rect, float opacity) {
+    ID2D1Bitmap* bmp = GetBitmap(handle);
+    if (!bmp || !d2d_context_) return;
+
+    auto px = bmp->GetPixelSize();
+    if (px.width == 0 || px.height == 0) return;
+
+    Microsoft::WRL::ComPtr<ID2D1Effect> effect;
+    if (FAILED(d2d_context_->CreateEffect(CLSID_D2D1Scale, &effect))) {
+        DrawBitmap(handle, dest_rect, opacity); // fallback
+        return;
+    }
+    effect->SetInput(0, bmp);
+    float sx = dest_rect.w / static_cast<float>(px.width);
+    float sy = dest_rect.h / static_cast<float>(px.height);
+    effect->SetValue(D2D1_SCALE_PROP_SCALE, D2D1_VECTOR_2F{sx, sy});
+    effect->SetValue(D2D1_SCALE_PROP_INTERPOLATION_MODE,
+                     D2D1_SCALE_INTERPOLATION_MODE_CUBIC);
+    effect->SetValue(D2D1_SCALE_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD);
+
+    D2D1_POINT_2F target_offset = D2D1::Point2F(dest_rect.x, dest_rect.y);
+    d2d_context_->DrawImage(effect.Get(),
+                            &target_offset,
+                            nullptr,
+                            D2D1_INTERPOLATION_MODE_LINEAR,
+                            D2D1_COMPOSITE_MODE_SOURCE_OVER);
 }
 
 } // namespace overlay::overlay

@@ -61,6 +61,7 @@ public:
     BitmapHandle CreateBitmapFromImageData(const ::overlay::utils::ImageData& image_data) override;
     void ReleaseBitmap(BitmapHandle handle) override;
     void DrawBitmap(BitmapHandle handle, const Rect& dest_rect, float opacity) override;
+    void DrawBitmapHighQuality(BitmapHandle handle, const Rect& dest_rect, float opacity) override;
     void* GetRawContext() override { return d2d_context_.Get(); }
 
 private:

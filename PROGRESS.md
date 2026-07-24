@@ -80,13 +80,37 @@
   - 默认 5 秒运行退出码 `exit=0`。
   - 临时开启编辑器自动显示运行 5 秒退出码 `exit=0`（已回退）。
 
+### Task 19：完善背景图、进度条与热加载
+- 状态：已完成（待推送）。
+- 主要内容：
+  - **背景图 cover 渲染**：
+    - `VisualRenderer::DrawBackground()` 保持等比 cover 裁剪计算，绘制时改用 `Direct2DRenderer::DrawBitmapHighQuality()`。
+    - `Direct2DRenderer` 新增 `DrawBitmapHighQuality()`，使用 `ID2D1Effect`（`CLSID_D2D1Scale`） cubic 插值，`CreateEffect` 失败时回退普通 `DrawBitmap`。
+  - **进度条**：
+    - `RenderState` 新增 `overall_progress`（0..1）与 `show_progress`。
+    - 新增 `VisualRenderer::DrawProgressBar()`：阶段条下方 4px（缩放后）细条，半透明轨道 + 主题色填充。
+    - `main.cpp` 渲染循环根据 `display.show_progress` 填充开关，并按 `(current_step + step_progress) / total_steps` 计算总进度。
+  - **配置热加载**：
+    - 新增 `src/utils/FileWatcher.h/.cpp`：使用 `ReadDirectoryChangesW`（overlapped）监听 `profiles/default.json` 所在目录，文件修改时 `PostMessageW` 通知主窗口。
+    - `main.cpp` 通过 `SetWindowSubclass` 处理 `WM_USER_CONFIG_CHANGED`，400ms 防抖定时器后调用 `ReloadConfig`。
+    - 编辑器打开/保存期间 `Pause()`/`Resume()` 文件监视，避免保存触发热加载竞争。
+    - `AppContext` 新增 `std::mutex config_mutex`，`ReloadConfig` 与渲染循环共享状态访问均加锁，避免热加载与渲染线程数据竞争。
+  - `CMakeLists.txt` 加入 `FileWatcher` 源文件与 `comctl32` 库。
+- 代码改动：
+  - 新增 `src/utils/FileWatcher.h/.cpp`。
+  - 修改 `src/overlay/IRenderer.h`、`Direct2DRenderer.h/.cpp`、`VisualRenderer.h/.cpp`。
+  - 修改 `src/main.cpp`、`CMakeLists.txt`。
+- 验证：
+  - MSBuild Debug x64 编译 0 错误、0 警告。
+  - 默认 5 秒运行退出码 `exit=0`。
+  - 临时开启编辑器自动显示运行 5 秒退出码 `exit=0`（已回退）。
+
 ## 未推送提交
 
 无。
 
 ## 待办任务
 
-- [ ] **Task 19**：完善背景图、进度条与热加载
 - [ ] **Task 20**：测试、打包与 README 完善
 
 ## 关键命令备忘
