@@ -61,7 +61,7 @@
   - 临时开启编辑器自动显示运行 5 秒退出码 `exit=0`（已回退）。
 
 ### Task 18：实现撤销重做与 `EditHistory`
-- 状态：已完成（待提交并推送）。
+- 状态：已完成并已推送（commit `937429e`，已推送到 `feat/implementation`）。
 - 主要内容：
   - 新增 `src/editor/EditHistory.h`：基于 `AppConfig` 快照的撤销重做栈（最大 50 步）。
   - 在 `EditorComponents` 中集成 `EditHistory`：
@@ -82,7 +82,7 @@
 
 ## 未推送提交
 
-- Task 18 本地已完成，待提交并推送。
+无。
 
 ## 待办任务
 
