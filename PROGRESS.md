@@ -1,6 +1,6 @@
 # MingC 实现进度记录
 
-> 记录时间：2026-07-24
+> 记录时间：2026-07-25
 > 当前分支：`feat/implementation`
 > 记录原因：用户暂时终止会话，保存当前进度供下次继续。
 
@@ -105,24 +105,47 @@
   - 默认 5 秒运行退出码 `exit=0`。
   - 临时开启编辑器自动显示运行 5 秒退出码 `exit=0`（已回退）。
 
-## 未推送提交
+### Task 20：测试、打包与 README 完善
+- 状态：已完成（待推送）。
+- 主要内容：
+  1. 移除 `src/main.cpp` 中无条件 5s 自动关闭计时器；新增 `--smoke-test` CLI 参数，2 秒自动退出用于 CI/本地验证。
+  2. `CMakeLists.txt` 追加 CPack ZIP 配置；`cpack -G ZIP -C Release` 生成绿色包 `MingCKeyOverlay-0.1.0-win64.zip`。
+  3. 新增 `scripts/build-and-test.bat`（Debug + Release 双配置构建 + 冒烟测试）与 `scripts/package-release.bat`（Release 构建 + CPack）。
+  4. `README.md` 扩展为完整中文用户指南，覆盖项目简介、功能特性、系统要求、快速开始、热键表、编辑器用法、JSON 配置说明、鸣潮兼容性、构建打包、故障排查。
+- 验证：
+  - `scripts/build-and-test.bat` 通过：Debug/Release 均 0 错误，`--smoke-test` 退出码 0。
+  - `scripts/package-release.bat` 通过，`build/release/MingCKeyOverlay-0.1.0-win64.zip` 生成。
+- 代码改动：
+  - 修改 `src/main.cpp`、`CMakeLists.txt`、`README.md`。
+  - 新增 `scripts/build-and-test.bat`、`scripts/package-release.bat`。
+
+## 进行中任务
 
 无。
 
+## 未推送提交
+
+Task 20 改动尚未提交与推送。
+
 ## 待办任务
 
-- [ ] **Task 20**：测试、打包与 README 完善
+- [ ] 提交并推送 Task 20。
 
 ## 关键命令备忘
 
 - 构建（Debug x64）：
   ```bash
-  "/c/Program Files/Microsoft Visual Studio/18/Community/MSBuild/Current/Bin/MSBuild.exe" \
-    "$(pwd -W)/build/debug/MingCKeyOverlay.sln" -p:Configuration=Debug -p:Platform=x64 -m
+  "/c/Program Files/CMake/bin/cmake.exe" --preset debug
+  "/c/Program Files/CMake/bin/cmake.exe" --build build/debug --config Debug
   ```
-- 运行测试：
+- 构建并测试：
   ```bash
-  ./build/debug/bin/MingCKeyOverlay.exe
+  export PATH="/c/Program Files/CMake/bin:$PATH"
+  scripts/build-and-test.bat
+  ```
+- 打包：
+  ```bash
+  scripts/package-release.bat
   ```
 - 推送：
   ```bash
@@ -131,5 +154,6 @@
 
 ## 注意事项
 
-- 当前 `main.cpp` 中保留了一个 5 秒自动关闭计时器，仅用于阶段验证，最终产品应移除。
+- `scripts/*.bat` 依赖 `cmake` 在 PATH 中；若本地未加入 PATH，可先执行 `set PATH=C:\Program Files\CMake\bin;%PATH%` 再运行脚本。
 - 编辑器自动显示测试改动已回退，当前 `main.cpp` 为干净状态。
+- `--smoke-test` 仅用于 CI/本地验证，正常模式下 overlay 会长期运行直到用户按 `Ctrl+Shift+Q` 退出。

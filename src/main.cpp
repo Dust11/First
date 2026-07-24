@@ -12,6 +12,7 @@
 #include "utils/TextEncoding.h"
 
 #include <windows.h>
+#include <shellapi.h>
 #include <commctrl.h>
 #include <atomic>
 #include <chrono>
@@ -19,6 +20,7 @@
 #include <format>
 #include <memory>
 #include <mutex>
+#include <string_view>
 #include <thread>
 
 namespace fs = std::filesystem;
@@ -395,13 +397,28 @@ static void RenderLoop(AppContext& ctx) {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
+    fs::path exe_dir = GetExeDirectory();
+    overlay::utils::Logger::Instance().Init(exe_dir / "overlay.log");
+
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    bool smoke_test = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::wstring_view(argv[i]) == L"--smoke-test") {
+            smoke_test = true;
+        } else if (std::wstring_view(argv[i]) == L"--help") {
+            LOG_INFO("Usage: MingCKeyOverlay.exe [--smoke-test] [--help]");
+            LocalFree(argv);
+            return 0;
+        }
+    }
+    LocalFree(argv);
+
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(hr)) {
         return 1;
     }
 
-    fs::path exe_dir = GetExeDirectory();
-    overlay::utils::Logger::Instance().Init(exe_dir / "overlay.log");
     LOG_INFO("Application started.");
 
     // 验证 TextEncoding 中文字符串往返
@@ -552,12 +569,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     SetWindowSubclass(window.GetHwnd(), OverlaySubclassProc, 0,
                       reinterpret_cast<DWORD_PTR>(&ctx));
 
-    // 启动自动关闭计时器（仅用于阶段验证，最终产品可移除）
-    std::thread timer([hwnd]() {
-        std::this_thread::sleep_for(5s);
-        LOG_INFO("Auto-close timer elapsed, posting WM_CLOSE.");
-        PostMessageW(hwnd, WM_CLOSE, 0, 0);
-    });
+    // 仅在 --smoke-test 模式下启动自动关闭计时器
+    std::thread timer;
+    if (smoke_test) {
+        timer = std::thread([hwnd]() {
+            std::this_thread::sleep_for(2s);
+            LOG_INFO("Smoke-test timer elapsed, posting WM_CLOSE.");
+            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        });
+    }
 
     std::thread render_thread(RenderLoop, std::ref(ctx));
 
@@ -568,9 +588,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     LOG_INFO("Waiting for render thread...");
     render_thread.join();
     LOG_INFO("Render thread joined.");
-    LOG_INFO("Waiting for timer thread...");
-    timer.join();
-    LOG_INFO("Timer thread joined.");
+    if (timer.joinable()) {
+        LOG_INFO("Waiting for timer thread...");
+        timer.join();
+        LOG_INFO("Timer thread joined.");
+    }
 
     if (ctx.active_detector == &ctx.polling_detector) {
         ctx.polling_detector.Stop();
