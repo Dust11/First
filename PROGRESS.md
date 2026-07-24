@@ -81,7 +81,7 @@
   - 临时开启编辑器自动显示运行 5 秒退出码 `exit=0`（已回退）。
 
 ### Task 19：完善背景图、进度条与热加载
-- 状态：已完成（待推送）。
+- 状态：已完成并已推送（commit `b562fc4`，已推送到 `feat/implementation`）。
 - 主要内容：
   - **背景图 cover 渲染**：
     - `VisualRenderer::DrawBackground()` 保持等比 cover 裁剪计算，绘制时改用 `Direct2DRenderer::DrawBitmapHighQuality()`。
