@@ -38,7 +38,7 @@
   - 临时开启编辑器自动显示的运行退出码 `exit=0`（已回退该临时改动）。
 
 ### Task 17：实现编辑器背景图、设置与原子保存
-- 状态：已完成并已推送（commit 待记录，已推送到 `feat/implementation`）。
+- 状态：已完成并已推送（commit `2df96a3`，已推送到 `feat/implementation`）。
 - 主要内容：
   - **背景图设置面板**：
     - 可手动编辑 `TeamRotation::background_image` 相对路径。
