@@ -60,13 +60,32 @@
   - 默认 5 秒运行退出码 `exit=0`。
   - 临时开启编辑器自动显示运行 5 秒退出码 `exit=0`（已回退）。
 
+### Task 18：实现撤销重做与 `EditHistory`
+- 状态：已完成（待提交并推送）。
+- 主要内容：
+  - 新增 `src/editor/EditHistory.h`：基于 `AppConfig` 快照的撤销重做栈（最大 50 步）。
+  - 在 `EditorComponents` 中集成 `EditHistory`：
+    - 首次打开时自动记录初始快照（此时不可撤销）。
+    - 流程、角色段、角色、阶段、按键序列、背景图、设置等所有有意义编辑后调用 `history_.Push(cfg)`。
+    - 文本/数值输入使用 `IsItemDeactivatedAfterEdit()` 避免逐字符快照。
+  - 快捷键：编辑器主窗口焦点下 `Ctrl+Z` 撤销、`Ctrl+Y`/`Ctrl+Shift+Z` 重做。
+  - 撤销/重做时恢复整个 `AppConfig`、调用 `apply_callback` 使 overlay 同步更新，并清空延迟操作/重命名等瞬态状态。
+  - 编辑器关闭（`EditorWindow::Hide`/`Shutdown`）时调用 `OnEditorHidden()` 清空历史，不跨会话持久化。
+- 代码改动：
+  - `src/editor/EditHistory.h`：新增。
+  - `src/editor/EditorComponents.h/.cpp`：新增 `OnEditorHidden`、`ClearTransientState`，所有绘制函数增加 `history_.Push` 调用点。
+  - `src/editor/EditorWindow.cpp`：`Hide()`/`Shutdown()` 调用 `components_.OnEditorHidden()`。
+- 验证：
+  - MSBuild Debug x64 编译 0 错误。
+  - 默认 5 秒运行退出码 `exit=0`。
+  - 临时开启编辑器自动显示运行 5 秒退出码 `exit=0`（已回退）。
+
 ## 未推送提交
 
-无。
+- Task 18 本地已完成，待提交并推送。
 
 ## 待办任务
 
-- [ ] **Task 18**：实现撤销重做与 `EditHistory`
 - [ ] **Task 19**：完善背景图、进度条与热加载
 - [ ] **Task 20**：测试、打包与 README 完善
 

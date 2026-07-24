@@ -220,6 +220,8 @@ bool EditorWindow::Initialize(HWND overlay_hwnd, ID3D11Device* device) {
 void EditorWindow::Shutdown() {
     if (!initialized_) return;
 
+    components_.OnEditorHidden();
+
     if (imgui_backends_initialized_) {
         ImGui_ImplDX11_Shutdown();
         ImGui_ImplWin32_Shutdown();
@@ -270,6 +272,7 @@ void EditorWindow::Show() {
 void EditorWindow::Hide() {
     open_ = false;
     pending_show_ = false;
+    components_.OnEditorHidden();
     if (hwnd_) {
         ShowWindow(hwnd_, SW_HIDE);
     }

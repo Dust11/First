@@ -43,6 +43,23 @@ constexpr IconOption kIconOptions[] = {
 
 } // namespace
 
+void EditorComponents::ClearTransientState() {
+    stage_to_delete_ = -1;
+    step_to_delete_ = -1;
+    step_to_duplicate_ = -1;
+    step_move_src_ = -1;
+    step_move_dst_ = -1;
+    renaming_ = false;
+    rename_buffer_[0] = '\0';
+    bg_path_buffer_[0] = '\0';
+}
+
+void EditorComponents::OnEditorHidden() {
+    history_.Clear();
+    history_seeded_ = false;
+    ClearTransientState();
+}
+
 void EditorComponents::Draw(overlay::core::ConfigManager* config_manager,
                             ID3D11Device* device,
                             const std::function<void()>& apply_callback) {
@@ -71,9 +88,41 @@ void EditorComponents::Draw(overlay::core::ConfigManager* config_manager,
     }
     if (selected_rotation_ < 0) selected_rotation_ = 0;
 
+    if (!history_seeded_) {
+        history_.Push(cfg);
+        history_seeded_ = true;
+    }
+
     auto& rotation = cfg.rotations[selected_rotation_];
 
     ImGui::Begin("\xe9\x98\x9f\xe4\xbc\x8d\xe6\xb5\x81\xe7\xa8\x8b\xe7\xbc\x96\xe8\xbe\x91\xe5\x99\xa8"); // 队伍流程编辑器
+
+    // Undo / Redo 快捷键（需处于窗口上下文中才能检测焦点）
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+        !ImGui::GetIO().WantTextInput) {
+        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z) && history_.CanUndo()) {
+            cfg = history_.Undo();
+            if (apply_callback) apply_callback();
+            ClearTransientState();
+            if (selected_rotation_ >= static_cast<int>(cfg.rotations.size())) {
+                selected_rotation_ = static_cast<int>(cfg.rotations.size()) - 1;
+            }
+            if (selected_rotation_ < 0) selected_rotation_ = 0;
+            rotation = cfg.rotations[selected_rotation_];
+        } else if ((ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y) ||
+                    ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z)) &&
+                   history_.CanRedo()) {
+            cfg = history_.Redo();
+            if (apply_callback) apply_callback();
+            ClearTransientState();
+            if (selected_rotation_ >= static_cast<int>(cfg.rotations.size())) {
+                selected_rotation_ = static_cast<int>(cfg.rotations.size()) - 1;
+            }
+            if (selected_rotation_ < 0) selected_rotation_ = 0;
+            rotation = cfg.rotations[selected_rotation_];
+        }
+    }
+
     if (ImGui::BeginTable("editor_layout", 3,
                           ImGuiTableFlags_Resizable |
                               ImGuiTableFlags_BordersInnerV)) {
@@ -86,10 +135,10 @@ void EditorComponents::Draw(overlay::core::ConfigManager* config_manager,
         DrawRotations(cfg, config_manager, apply_callback);
 
         ImGui::TableNextColumn();
-        DrawSegments(rotation);
+        DrawSegments(cfg, rotation);
 
         ImGui::TableNextColumn();
-        DrawCharacters(rotation);
+        DrawCharacters(cfg, rotation);
 
         ImGui::EndTable();
     }
@@ -109,10 +158,10 @@ void EditorComponents::Draw(overlay::core::ConfigManager* config_manager,
         ImGui::TableHeadersRow();
 
         ImGui::TableNextColumn();
-        DrawStages(rotation);
+        DrawStages(cfg, rotation);
 
         ImGui::TableNextColumn();
-        DrawKeySequence(rotation);
+        DrawKeySequence(cfg, rotation);
 
         ImGui::EndTable();
     }
@@ -145,10 +194,12 @@ void EditorComponents::DrawRotations(
         rot.steps = {{"\xe6\x96\xb0\xe8\xa7\x92\xe8\x89\xb2", "LButton", "\xe6\x96\xb0\xe6\xad\xa5\xe9\xaa\xa4", "", 1000}};
         cfg.rotations.push_back(std::move(rot));
         selected_rotation_ = static_cast<int>(cfg.rotations.size()) - 1;
+        history_.Push(cfg);
     }
     ImGui::SameLine();
     if (ImGui::Button("\xe8\xae\xbe\xe4\xb8\xba\xe5\xbd\x93\xe5\x89\x8d") && selected_rotation_ >= 0) { // 设为当前
         cfg.active_rotation = cfg.rotations[selected_rotation_].name;
+        history_.Push(cfg);
     }
     ImGui::SameLine();
     if (ImGui::Button("\xe4\xbf\x9d\xe5\xad\x98")) { // 保存
@@ -187,6 +238,7 @@ void EditorComponents::DrawRotations(
                 if (was_active && !cfg.rotations.empty()) {
                     cfg.active_rotation = cfg.rotations[0].name;
                 }
+                history_.Push(cfg);
             }
         }
 
@@ -205,6 +257,7 @@ void EditorComponents::DrawRotations(
                     if (cfg.active_rotation == old_name) {
                         cfg.active_rotation = new_name;
                     }
+                    history_.Push(cfg);
                 }
                 rename_index_ = -1;
                 ImGui::CloseCurrentPopup();
@@ -221,7 +274,8 @@ void EditorComponents::DrawRotations(
     ImGui::EndChild();
 }
 
-void EditorComponents::DrawSegments(overlay::core::TeamRotation& rotation) {
+void EditorComponents::DrawSegments(overlay::core::AppConfig& cfg,
+                                    overlay::core::TeamRotation& rotation) {
     auto segments = BuildSegments(rotation);
     if (selected_segment_ >= static_cast<int>(segments.size())) {
         selected_segment_ = -1;
@@ -241,6 +295,7 @@ void EditorComponents::DrawSegments(overlay::core::TeamRotation& rotation) {
         rotation.steps.erase(rotation.steps.begin() + it->start,
                              rotation.steps.begin() + it->start + it->count);
         selected_segment_ = -1;
+        history_.Push(cfg);
     }
 
     if (show_new_segment_popup_) {
@@ -262,6 +317,7 @@ void EditorComponents::DrawSegments(overlay::core::TeamRotation& rotation) {
                 rotation.steps.push_back(std::move(step));
                 selected_segment_ = static_cast<int>(BuildSegments(rotation).size()) - 1;
                 ImGui::CloseCurrentPopup();
+                history_.Push(cfg);
             }
         }
         ImGui::Separator();
@@ -281,6 +337,7 @@ void EditorComponents::DrawSegments(overlay::core::TeamRotation& rotation) {
                     rotation.characters.push_back({name, "", "#888888"});
                 }
                 selected_segment_ = static_cast<int>(BuildSegments(rotation).size()) - 1;
+                history_.Push(cfg);
             }
             ImGui::CloseCurrentPopup();
         }
@@ -339,6 +396,7 @@ void EditorComponents::DrawSegments(overlay::core::TeamRotation& rotation) {
                     segs[dst] = std::move(moved);
                     RebuildStepsFromSegments(rotation.steps, segs);
                     selected_segment_ = dst;
+                    history_.Push(cfg);
                 }
             }
             ImGui::EndDragDropTarget();
@@ -348,7 +406,8 @@ void EditorComponents::DrawSegments(overlay::core::TeamRotation& rotation) {
     ImGui::EndChild();
 }
 
-void EditorComponents::DrawCharacters(overlay::core::TeamRotation& rotation) {
+void EditorComponents::DrawCharacters(overlay::core::AppConfig& cfg,
+                                      overlay::core::TeamRotation& rotation) {
     ImGui::TextUnformatted("\xe8\xa7\x92\xe8\x89\xb2\xe8\xa7\x86\xe8\xa7\x89\xe4\xbf\xa1\xe6\x81\xaf"); // 角色视觉信息
 
     if (ImGui::Button("\xe6\xb7\xbb\xe5\x8a\xa0\xe8\xa7\x92\xe8\x89\xb2")) { // 添加角色
@@ -356,6 +415,7 @@ void EditorComponents::DrawCharacters(overlay::core::TeamRotation& rotation) {
         if (!name.empty() && !overlay::core::FindCharacter(rotation, name)) {
             rotation.characters.push_back({name, "", "#888888"});
             selected_character_ = static_cast<int>(rotation.characters.size()) - 1;
+            history_.Push(cfg);
         }
     }
     ImGui::SameLine();
@@ -395,6 +455,7 @@ void EditorComponents::DrawCharacters(overlay::core::TeamRotation& rotation) {
                 }
             }
         }
+        if (ImGui::IsItemDeactivatedAfterEdit()) history_.Push(cfg);
 
         std::string avatar = c.avatar_image;
         avatar.resize(512);
@@ -402,11 +463,13 @@ void EditorComponents::DrawCharacters(overlay::core::TeamRotation& rotation) {
                              avatar.size())) {
             c.avatar_image = avatar.c_str();
         }
+        if (ImGui::IsItemDeactivatedAfterEdit()) history_.Push(cfg);
 
         ImVec4 color = HexToColor(c.theme_color);
         if (ImGui::ColorEdit3("\xe4\xb8\xbb\xe9\xa2\x98\xe8\x89\xb2", &color.x)) { // 主题色
             c.theme_color = ColorToHex(color);
         }
+        if (ImGui::IsItemDeactivatedAfterEdit()) history_.Push(cfg);
     }
 
     if (selected_character_ >= 0 &&
@@ -421,6 +484,7 @@ void EditorComponents::DrawCharacters(overlay::core::TeamRotation& rotation) {
                     selected_character_ =
                         static_cast<int>(rotation.characters.size()) - 1;
                 }
+                history_.Push(cfg);
             } else {
                 LOG_WARN(std::format("Cannot delete character '{}': still in use.",
                                      c.name));
@@ -429,7 +493,8 @@ void EditorComponents::DrawCharacters(overlay::core::TeamRotation& rotation) {
     }
 }
 
-void EditorComponents::DrawStages(overlay::core::TeamRotation& rotation) {
+void EditorComponents::DrawStages(overlay::core::AppConfig& cfg,
+                                  overlay::core::TeamRotation& rotation) {
     ImGui::TextUnformatted("\xe9\x98\xb6\xe6\xae\xb5\xe6\xa0\x87\xe8\xae\xb0"); // 阶段标记
 
     if (ImGui::Button("\xe6\xb7\xbb\xe5\x8a\xa0\xe9\x98\xb6\xe6\xae\xb5")) { // 添加阶段
@@ -447,6 +512,7 @@ void EditorComponents::DrawStages(overlay::core::TeamRotation& rotation) {
             rotation.stages[0].start_step = 0;
         }
         selected_stage_ = -1;
+        history_.Push(cfg);
     }
 
     ImGui::BeginChild("stage_list", ImVec2(0, ImGui::GetContentRegionAvail().y), true);
@@ -460,6 +526,7 @@ void EditorComponents::DrawStages(overlay::core::TeamRotation& rotation) {
         if (ImGui::InputText("\xe5\x90\x8d\xe7\xa7\xb0", label.data(), label.size())) { // 名称
             stage.label = label.c_str();
         }
+        if (ImGui::IsItemDeactivatedAfterEdit()) history_.Push(cfg);
 
         // 起始步骤
         int start = static_cast<int>(stage.start_step);
@@ -477,6 +544,7 @@ void EditorComponents::DrawStages(overlay::core::TeamRotation& rotation) {
             }
             selected_stage_ = -1;
         }
+        if (ImGui::IsItemDeactivatedAfterEdit()) history_.Push(cfg);
 
         // 颜色覆盖
         bool auto_color = stage.color.empty();
@@ -486,12 +554,14 @@ void EditorComponents::DrawStages(overlay::core::TeamRotation& rotation) {
             } else {
                 stage.color = "#888888";
             }
+            history_.Push(cfg);
         }
         if (!auto_color) {
             ImVec4 col = HexToColor(stage.color);
             if (ImGui::ColorEdit3("\xe9\xa2\x9c\xe8\x89\xb2", &col.x)) { // 颜色
                 stage.color = ColorToHex(col);
             }
+            if (ImGui::IsItemDeactivatedAfterEdit()) history_.Push(cfg);
         }
 
         ImGui::SameLine();
@@ -510,12 +580,14 @@ void EditorComponents::DrawStages(overlay::core::TeamRotation& rotation) {
             rotation.stages.erase(rotation.stages.begin() + stage_to_delete_);
             if (selected_stage_ == stage_to_delete_) selected_stage_ = -1;
             else if (selected_stage_ > stage_to_delete_) --selected_stage_;
+            history_.Push(cfg);
         }
         stage_to_delete_ = -1;
     }
 }
 
-void EditorComponents::DrawKeySequence(overlay::core::TeamRotation& rotation) {
+void EditorComponents::DrawKeySequence(overlay::core::AppConfig& cfg,
+                                       overlay::core::TeamRotation& rotation) {
     ImGui::Text("\xe6\x8c\x89\xe9\x94\xae\xe5\xba\x8f\xe5\x88\x97 (%zu \xe6\xad\xa5)", rotation.steps.size()); // 按键序列
 
     if (ImGui::Button("\xe6\xb7\xbb\xe5\x8a\xa0\xe6\xad\xa5\xe9\xaa\xa4")) { // 添加步骤
@@ -541,6 +613,7 @@ void EditorComponents::DrawKeySequence(overlay::core::TeamRotation& rotation) {
         }
         rotation.steps.insert(rotation.steps.begin() + insert_pos, std::move(step));
         selected_step_ = static_cast<int>(insert_pos);
+        history_.Push(cfg);
     }
     ImGui::SameLine();
     if (ImGui::Button("\xe5\x88\xa0\xe9\x99\xa4\xe9\x80\x89\xe4\xb8\xad") && // 删除选中
@@ -617,6 +690,7 @@ void EditorComponents::DrawKeySequence(overlay::core::TeamRotation& rotation) {
                         bool selected = (step.character == c.name);
                         if (ImGui::Selectable(c.name.c_str(), selected)) {
                             step.character = c.name;
+                            history_.Push(cfg);
                         }
                         if (selected) ImGui::SetItemDefaultFocus();
                     }
@@ -630,6 +704,7 @@ void EditorComponents::DrawKeySequence(overlay::core::TeamRotation& rotation) {
                 if (ImGui::InputText("##key", key.data(), key.size())) {
                     step.key = key.c_str();
                 }
+                if (ImGui::IsItemDeactivatedAfterEdit()) history_.Push(cfg);
 
                 // 技能名
                 ImGui::TableSetColumnIndex(3);
@@ -638,6 +713,7 @@ void EditorComponents::DrawKeySequence(overlay::core::TeamRotation& rotation) {
                 if (ImGui::InputText("##skill", skill.data(), skill.size())) {
                     step.skill_name = skill.c_str();
                 }
+                if (ImGui::IsItemDeactivatedAfterEdit()) history_.Push(cfg);
 
                 // 图标类型
                 ImGui::TableSetColumnIndex(4);
@@ -655,6 +731,7 @@ void EditorComponents::DrawKeySequence(overlay::core::TeamRotation& rotation) {
                     const_cast<void*>(static_cast<const void*>(kIconOptions)),
                     IM_ARRAYSIZE(kIconOptions))) {
                     step.key_icon = kIconOptions[icon_index].value;
+                    history_.Push(cfg);
                 }
 
                 // 自定义图标路径
@@ -666,6 +743,7 @@ void EditorComponents::DrawKeySequence(overlay::core::TeamRotation& rotation) {
                 if (ImGui::InputText("##custom", custom.data(), custom.size())) {
                     step.custom_icon = custom.c_str();
                 }
+                if (ImGui::IsItemDeactivatedAfterEdit()) history_.Push(cfg);
                 ImGui::EndDisabled();
 
                 // 持续时间
@@ -674,6 +752,7 @@ void EditorComponents::DrawKeySequence(overlay::core::TeamRotation& rotation) {
                 if (ImGui::InputInt("##dur", &duration)) {
                     step.duration_ms = std::max(duration, 100);
                 }
+                if (ImGui::IsItemDeactivatedAfterEdit()) history_.Push(cfg);
 
                 // 操作
                 ImGui::TableSetColumnIndex(7);
@@ -698,6 +777,7 @@ void EditorComponents::DrawKeySequence(overlay::core::TeamRotation& rotation) {
         if (selected_step_ == step_to_delete_) selected_step_ = -1;
         else if (selected_step_ > step_to_delete_) --selected_step_;
         step_to_delete_ = -1;
+        history_.Push(cfg);
     }
 
     if (step_to_duplicate_ >= 0 &&
@@ -707,6 +787,7 @@ void EditorComponents::DrawKeySequence(overlay::core::TeamRotation& rotation) {
         if (selected_step_ == step_to_duplicate_) selected_step_ = step_to_duplicate_ + 1;
         else if (selected_step_ > step_to_duplicate_) ++selected_step_;
         step_to_duplicate_ = -1;
+        history_.Push(cfg);
     }
 
     if (step_move_src_ >= 0 && step_move_dst_ >= 0 &&
@@ -729,6 +810,7 @@ void EditorComponents::DrawKeySequence(overlay::core::TeamRotation& rotation) {
         selected_step_ = static_cast<int>(dst);
         step_move_src_ = -1;
         step_move_dst_ = -1;
+        history_.Push(cfg);
     }
 }
 
@@ -744,6 +826,7 @@ void EditorComponents::DrawBackgroundImage(
     if (ImGui::InputText("##bg_path", bg_path_buffer_, sizeof(bg_path_buffer_))) {
         rotation.background_image = bg_path_buffer_;
     }
+    if (ImGui::IsItemDeactivatedAfterEdit()) history_.Push(config_manager->GetConfig());
 
     ImGui::SameLine();
     if (ImGui::Button("\xe9\x80\x89\xe6\x8b\xa9\xe5\x9b\xbe\xe7\x89\x87...")) {
@@ -777,6 +860,7 @@ void EditorComponents::DrawBackgroundImage(
                     fs::copy_file(src, dst, fs::copy_options::overwrite_existing);
                     fs::path rel = fs::relative(dst, config_manager->GetExeDirectory());
                     rotation.background_image = rel.generic_string();
+                    history_.Push(config_manager->GetConfig());
                     LOG_INFO(std::format("Copied background image to {}",
                                          rel.generic_string()));
                 } catch (const std::exception& e) {
@@ -885,6 +969,11 @@ void EditorComponents::DrawSettings(overlay::core::AppConfig& cfg) {
     json& input = ensure_object(cfg.settings, "input");
     json& hotkeys = ensure_object(cfg.settings, "hotkeys");
 
+    auto commit = [this, &cfg]() {
+        if (ImGui::IsItemDeactivatedAfterEdit())
+            history_.Push(cfg);
+    };
+
     if (ImGui::CollapsingHeader("\xe6\x98\xbe\xe7\xa4\xba",
                                 ImGuiTreeNodeFlags_DefaultOpen)) {
         float opacity = display.value("opacity", 0.85f);
@@ -892,11 +981,13 @@ void EditorComponents::DrawSettings(overlay::core::AppConfig& cfg) {
                                0.1f, 1.0f)) {
             display["opacity"] = opacity;
         }
+        commit();
 
         float scale = display.value("scale", 1.0f);
         if (ImGui::SliderFloat("\xe7\xbc\xa9\xe6\x94\xbe", &scale, 0.5f, 2.0f)) {
             display["scale"] = scale;
         }
+        commit();
 
         json& pos = ensure_object(display, "position");
         int x = pos.value("x", 100);
@@ -906,43 +997,51 @@ void EditorComponents::DrawSettings(overlay::core::AppConfig& cfg) {
             pos["x"] = xy[0];
             pos["y"] = xy[1];
         }
+        commit();
 
         bool loop = display.value("loop", true);
         if (ImGui::Checkbox("\xe5\xbe\xaa\xe7\x8e\xaf\xe6\x92\xad\xe6\x94\xbe", &loop)) {
             display["loop"] = loop;
         }
+        commit();
 
         bool show_avatar = display.value("show_avatar", true);
         if (ImGui::Checkbox("\xe6\x98\xbe\xe7\xa4\xba\xe5\xa4\xb4\xe5\x83\x8f", &show_avatar)) {
             display["show_avatar"] = show_avatar;
         }
+        commit();
         ImGui::SameLine();
         bool show_stage_bar = display.value("show_stage_bar", true);
-        if (ImGui::Checkbox("\xe6\x98\xbe\xe7\xa4\xba\xe9\x98\xb6\xae\xb5\xe6\x9d\xa1",
+        if (ImGui::Checkbox("\xe6\x98\xbe\xe7\xa4\xba\xe9\x98\xb6\xe6\xae\xb5\xe6\x9d\xa1",
                             &show_stage_bar)) {
             display["show_stage_bar"] = show_stage_bar;
         }
+        commit();
         ImGui::SameLine();
         bool show_progress = display.value("show_progress", true);
         if (ImGui::Checkbox("\xe6\x98\xbe\xe7\xa4\xba\xe8\xbf\x9b\xe5\xba\xa6\xe6\x9d\xa1",
                             &show_progress)) {
             display["show_progress"] = show_progress;
         }
+        commit();
         ImGui::SameLine();
         bool show_arrows = display.value("show_arrows", true);
         if (ImGui::Checkbox("\xe6\x98\xbe\xe7\xa4\xba\xe7\xae\xad\xe5\xa4\xb4", &show_arrows)) {
             display["show_arrows"] = show_arrows;
         }
+        commit();
 
         int avatar_size = display.value("avatar_size", 56);
         if (ImGui::InputInt("\xe5\xa4\xb4\xe5\x83\x8f\xe5\xa4\xa7\xe5\xb0\x8f", &avatar_size)) {
             display["avatar_size"] = std::max(avatar_size, 16);
         }
+        commit();
         int stage_bar_height = display.value("stage_bar_height", 28);
         if (ImGui::InputInt("\xe9\x98\xb6\xe6\xae\xb5\xe6\x9d\xa1\xe9\xab\x98\xe5\xba\xa6",
                             &stage_bar_height)) {
             display["stage_bar_height"] = std::max(stage_bar_height, 8);
         }
+        commit();
     }
 
     if (ImGui::CollapsingHeader("\xe6\x8c\x89\xe9\x94\xae\xe6\xa0\xb7\xe5\xbc\x8f")) {
@@ -952,14 +1051,19 @@ void EditorComponents::DrawSettings(overlay::core::AppConfig& cfg) {
         int ksp = ks.value("spacing", 10);
         int kr = ks.value("border_radius", 8);
         if (ImGui::InputInt("\xe5\xae\xbd\xe5\xba\xa6", &kw)) ks["key_width"] = std::max(kw, 20);
+        commit();
         if (ImGui::InputInt("\xe9\xab\x98\xe5\xba\xa6", &kh)) ks["key_height"] = std::max(kh, 20);
+        commit();
         if (ImGui::InputInt("\xe9\x97\xb4\xe8\xb7\x9d", &ksp)) ks["spacing"] = std::max(ksp, 0);
+        commit();
         if (ImGui::InputInt("\xe5\x9c\x86\xe8\xa7\x92", &kr)) ks["border_radius"] = std::max(kr, 0);
+        commit();
 
-        auto edit_color = [&ks](const char* label, const std::string& key,
+        auto edit_color = [this, &ks, &cfg](const char* label, const std::string& key,
                                 const char* def) {
             ImVec4 col = HexToColor(ks.value(key, std::string(def)));
             if (ImGui::ColorEdit3(label, &col.x)) ks[key] = ColorToHex(col);
+            if (ImGui::IsItemDeactivatedAfterEdit()) history_.Push(cfg);
         };
         edit_color("\xe5\xbd\x93\xe5\x89\x8d\xe6\xad\xa5\xe9\xaa\xa4\xe8\x83\x8c\xe6\x99\xaf",
                    "active_color", "#F3F4F6");
@@ -992,6 +1096,7 @@ void EditorComponents::DrawSettings(overlay::core::AppConfig& cfg) {
             if (ImGui::InputText(label, val.data(), val.size())) {
                 hotkeys[name] = val.c_str();
             }
+            commit();
         }
     }
 
@@ -1001,12 +1106,14 @@ void EditorComponents::DrawSettings(overlay::core::AppConfig& cfg) {
                              30, 120)) {
             input["poll_hz"] = poll_hz;
         }
+        commit();
 
         bool foreground_only = input.value("foreground_only", true);
         if (ImGui::Checkbox("\xe4\xbb\x85\xe6\xb8\xb8\xe6\x88\x8f\xe5\x89\x8d\xe5\x8f\xb0\xe6\x97\xb6\xe6\xa3\x80\xe6\xb5\x8b",
                             &foreground_only)) {
             input["foreground_only"] = foreground_only;
         }
+        commit();
 
         std::string target = input.value("target_process",
                                          std::string("Client-Win64-Shipping.exe"));
@@ -1015,17 +1122,20 @@ void EditorComponents::DrawSettings(overlay::core::AppConfig& cfg) {
                              target.data(), target.size())) {
             input["target_process"] = target.c_str();
         }
+        commit();
 
         bool wrong_flash = input.value("wrong_key_flash", true);
         if (ImGui::Checkbox("\xe9\x94\x99\xe9\x94\xae\xe7\xba\xa2\xe9\x97\xaa", &wrong_flash)) {
             input["wrong_key_flash"] = wrong_flash;
         }
+        commit();
 
         int timeout = input.value("timeout_skip_ms", 0);
         if (ImGui::InputInt("\xe8\xb6\x85\xe6\x97\xb6\xe8\x87\xaa\xe5\x8a\xa8\xe8\xb7\xb3\xe8\xbf\x87(ms, 0=\xe7\xa6\x81\xe7\x94\xa8)",
                             &timeout)) {
             input["timeout_skip_ms"] = std::max(timeout, 0);
         }
+        commit();
     }
 }
 

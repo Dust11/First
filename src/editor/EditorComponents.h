@@ -2,6 +2,7 @@
 
 #include "core/ConfigManager.h"
 #include "core/TeamRotation.h"
+#include "editor/EditHistory.h"
 #include "utils/ResourceLoader.h"
 
 #include "imgui.h"
@@ -27,6 +28,9 @@ public:
               ID3D11Device* device,
               const std::function<void()>& apply_callback);
 
+    // 编辑器关闭时清空历史（不跨会话持久化）
+    void OnEditorHidden();
+
 private:
     struct Segment {
         size_t start = 0;
@@ -37,14 +41,19 @@ private:
     void DrawRotations(overlay::core::AppConfig& cfg,
                        overlay::core::ConfigManager* config_manager,
                        const std::function<void()>& apply_callback);
-    void DrawSegments(overlay::core::TeamRotation& rotation);
-    void DrawCharacters(overlay::core::TeamRotation& rotation);
-    void DrawStages(overlay::core::TeamRotation& rotation);
-    void DrawKeySequence(overlay::core::TeamRotation& rotation);
+    void DrawSegments(overlay::core::AppConfig& cfg,
+                      overlay::core::TeamRotation& rotation);
+    void DrawCharacters(overlay::core::AppConfig& cfg,
+                        overlay::core::TeamRotation& rotation);
+    void DrawStages(overlay::core::AppConfig& cfg,
+                    overlay::core::TeamRotation& rotation);
+    void DrawKeySequence(overlay::core::AppConfig& cfg,
+                         overlay::core::TeamRotation& rotation);
     void DrawBackgroundImage(overlay::core::ConfigManager* config_manager,
                              overlay::core::TeamRotation& rotation);
     void DrawSettings(overlay::core::AppConfig& cfg);
 
+    void ClearTransientState();
     void UpdateBackgroundPreview(const std::filesystem::path& abs_path,
                                  ID3D11Device* device);
     bool CreatePreviewTexture(const overlay::utils::ImageData& data,
@@ -99,6 +108,9 @@ private:
     int step_to_duplicate_ = -1;
     int step_move_src_ = -1;
     int step_move_dst_ = -1;
+
+    EditHistory history_;
+    bool history_seeded_ = false;
 };
 
 } // namespace overlay::editor
