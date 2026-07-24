@@ -1,14 +1,23 @@
 #include "editor/EditorComponents.h"
 
 #include "utils/Logger.h"
+#include "utils/ResourceLoader.h"
+#include "utils/TextEncoding.h"
 
 #include <algorithm>
 #include <charconv>
+#include <commdlg.h>
 #include <cstdio>
 #include <cstring>
+#include <d3d11.h>
+#include <filesystem>
 #include <format>
+#include <utility>
+#include <wrl/client.h>
 
 namespace overlay::editor {
+
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -35,8 +44,15 @@ constexpr IconOption kIconOptions[] = {
 } // namespace
 
 void EditorComponents::Draw(overlay::core::ConfigManager* config_manager,
+                            ID3D11Device* device,
                             const std::function<void()>& apply_callback) {
     if (!config_manager) return;
+    device_ = device;
+
+    if (!resource_loader_initialized_) {
+        resource_loader_.Initialize();
+        resource_loader_initialized_ = true;
+    }
 
     auto& cfg = config_manager->GetConfig();
     if (cfg.rotations.empty()) {
@@ -99,6 +115,18 @@ void EditorComponents::Draw(overlay::core::ConfigManager* config_manager,
         DrawKeySequence(rotation);
 
         ImGui::EndTable();
+    }
+    ImGui::End();
+
+    // 背景图设置窗口（可停靠）
+    if (ImGui::Begin("\xe8\x83\x8c\xe6\x99\xaf\xe5\x9b\xbe\xe8\xae\xbe\xe7\xbd\xae")) {
+        DrawBackgroundImage(config_manager, rotation);
+    }
+    ImGui::End();
+
+    // 设置窗口（可停靠）
+    if (ImGui::Begin("\xe8\xae\xbe\xe7\xbd\xae")) {
+        DrawSettings(cfg);
     }
     ImGui::End();
 }
@@ -701,6 +729,303 @@ void EditorComponents::DrawKeySequence(overlay::core::TeamRotation& rotation) {
         selected_step_ = static_cast<int>(dst);
         step_move_src_ = -1;
         step_move_dst_ = -1;
+    }
+}
+
+void EditorComponents::DrawBackgroundImage(
+    overlay::core::ConfigManager* config_manager,
+    overlay::core::TeamRotation& rotation) {
+    ImGui::TextUnformatted("\xe8\x83\x8c\xe6\x99\xaf\xe5\x9b\xbe\xe7\x89\x87\xe8\xb7\xaf\xe5\xbe\x84");
+
+    std::string path = rotation.background_image;
+    if (path.size() >= sizeof(bg_path_buffer_)) path.resize(sizeof(bg_path_buffer_) - 1);
+    std::fill(bg_path_buffer_, bg_path_buffer_ + sizeof(bg_path_buffer_), '\0');
+    std::memcpy(bg_path_buffer_, path.data(), path.size());
+    if (ImGui::InputText("##bg_path", bg_path_buffer_, sizeof(bg_path_buffer_))) {
+        rotation.background_image = bg_path_buffer_;
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("\xe9\x80\x89\xe6\x8b\xa9\xe5\x9b\xbe\xe7\x89\x87...")) {
+        wchar_t buffer[MAX_PATH] = {};
+        OPENFILENAMEW ofn{};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = nullptr;
+        ofn.lpstrFile = buffer;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrFilter = L"Image files (*.png;*.jpg;*.jpeg;*.bmp)\0*.png;*.jpg;*.jpeg;*.bmp\0All files (*.*)\0*.*\0\0";
+        ofn.Flags = OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
+        if (GetOpenFileNameW(&ofn)) {
+            fs::path src(buffer);
+            if (fs::exists(src)) {
+                fs::path assets_dir = config_manager->GetExeDirectory() / "assets";
+                fs::create_directories(assets_dir);
+                fs::path dst = assets_dir / src.filename();
+                if (fs::exists(dst)) {
+                    fs::path stem = src.stem();
+                    fs::path ext = src.extension();
+                    for (int n = 1; n < 1000; ++n) {
+                        fs::path candidate = assets_dir /
+                            std::format("{}_{}{}", stem.string(), n, ext.string());
+                        if (!fs::exists(candidate)) {
+                            dst = candidate;
+                            break;
+                        }
+                    }
+                }
+                try {
+                    fs::copy_file(src, dst, fs::copy_options::overwrite_existing);
+                    fs::path rel = fs::relative(dst, config_manager->GetExeDirectory());
+                    rotation.background_image = rel.generic_string();
+                    LOG_INFO(std::format("Copied background image to {}",
+                                         rel.generic_string()));
+                } catch (const std::exception& e) {
+                    LOG_ERROR(std::format("Failed to copy background image: {}", e.what()));
+                }
+            }
+        }
+    }
+
+    if (!rotation.background_image.empty()) {
+        fs::path abs_path = overlay::utils::ResourceLoader::ResolvePath(
+            config_manager->GetExeDirectory(), rotation.background_image);
+        UpdateBackgroundPreview(abs_path, device_);
+        if (preview_bg_srv_) {
+            ImGui::Text("\xe9\xa2\x84\xe8\xa7\x88 (%ux%u)", preview_bg_width_,
+                        preview_bg_height_);
+            float max_w = ImGui::GetContentRegionAvail().x;
+            if (max_w < 64.0f) max_w = 200.0f;
+            float aspect = preview_bg_height_
+                               ? static_cast<float>(preview_bg_width_) /
+                                     preview_bg_height_
+                               : 1.0f;
+            float w = max_w;
+            float h = w / aspect;
+            if (h > 300.0f) {
+                h = 300.0f;
+                w = h * aspect;
+            }
+            ImGui::Image(reinterpret_cast<ImTextureID>(preview_bg_srv_.Get()),
+                         ImVec2(w, h));
+        } else {
+            ImGui::TextDisabled("\xe6\x97\xa0\xe6\xb3\x95\xe5\x8a\xa0\xe8\xbd\xbd\xe9\xa2\x84\xe8\xa7\x88");
+        }
+    }
+}
+
+void EditorComponents::UpdateBackgroundPreview(const fs::path& abs_path,
+                                               ID3D11Device* device) {
+    if (!device) return;
+    std::string key = abs_path.string();
+    if (key == preview_bg_path_ && preview_bg_srv_) return;
+
+    preview_bg_srv_.Reset();
+    preview_bg_width_ = 0;
+    preview_bg_height_ = 0;
+    preview_bg_path_ = key;
+
+    auto img = resource_loader_.LoadImage(abs_path);
+    if (!img) return;
+
+    ID3D11ShaderResourceView* srv = nullptr;
+    if (CreatePreviewTexture(*img, device, &srv, preview_bg_width_,
+                             preview_bg_height_)) {
+        preview_bg_srv_.Attach(srv);
+    }
+}
+
+bool EditorComponents::CreatePreviewTexture(const overlay::utils::ImageData& data,
+                                            ID3D11Device* device,
+                                            ID3D11ShaderResourceView** srv_out,
+                                            UINT& width_out,
+                                            UINT& height_out) {
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = data.width;
+    desc.Height = data.height;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.SampleDesc.Quality = 0;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA init{};
+    init.pSysMem = data.pixels.data();
+    init.SysMemPitch = data.pitch;
+
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
+    HRESULT hr = device->CreateTexture2D(&desc, &init, tex.GetAddressOf());
+    if (FAILED(hr)) {
+        LOG_ERROR(std::format("CreatePreviewTexture CreateTexture2D failed: 0x{:08X}",
+                              static_cast<uint32_t>(hr)));
+        return false;
+    }
+    hr = device->CreateShaderResourceView(tex.Get(), nullptr, srv_out);
+    if (FAILED(hr)) {
+        LOG_ERROR(std::format("CreatePreviewTexture CreateShaderResourceView failed: 0x{:08X}",
+                              static_cast<uint32_t>(hr)));
+        return false;
+    }
+    width_out = data.width;
+    height_out = data.height;
+    return true;
+}
+
+void EditorComponents::DrawSettings(overlay::core::AppConfig& cfg) {
+    using json = nlohmann::json;
+    auto ensure_object = [](json& parent, const std::string& key) -> json& {
+        if (!parent.contains(key) || !parent[key].is_object()) {
+            parent[key] = json::object();
+        }
+        return parent[key];
+    };
+
+    json& display = ensure_object(cfg.settings, "display");
+    json& input = ensure_object(cfg.settings, "input");
+    json& hotkeys = ensure_object(cfg.settings, "hotkeys");
+
+    if (ImGui::CollapsingHeader("\xe6\x98\xbe\xe7\xa4\xba",
+                                ImGuiTreeNodeFlags_DefaultOpen)) {
+        float opacity = display.value("opacity", 0.85f);
+        if (ImGui::SliderFloat("\xe4\xb8\x8d\xe9\x80\x8f\xe6\x98\x8e\xe5\xba\xa6", &opacity,
+                               0.1f, 1.0f)) {
+            display["opacity"] = opacity;
+        }
+
+        float scale = display.value("scale", 1.0f);
+        if (ImGui::SliderFloat("\xe7\xbc\xa9\xe6\x94\xbe", &scale, 0.5f, 2.0f)) {
+            display["scale"] = scale;
+        }
+
+        json& pos = ensure_object(display, "position");
+        int x = pos.value("x", 100);
+        int y = pos.value("y", 100);
+        int xy[2] = {x, y};
+        if (ImGui::InputInt2("\xe7\xaa\x97\xe5\x8f\xa3\xe4\xbd\x8d\xe7\xbd\xae", xy)) {
+            pos["x"] = xy[0];
+            pos["y"] = xy[1];
+        }
+
+        bool loop = display.value("loop", true);
+        if (ImGui::Checkbox("\xe5\xbe\xaa\xe7\x8e\xaf\xe6\x92\xad\xe6\x94\xbe", &loop)) {
+            display["loop"] = loop;
+        }
+
+        bool show_avatar = display.value("show_avatar", true);
+        if (ImGui::Checkbox("\xe6\x98\xbe\xe7\xa4\xba\xe5\xa4\xb4\xe5\x83\x8f", &show_avatar)) {
+            display["show_avatar"] = show_avatar;
+        }
+        ImGui::SameLine();
+        bool show_stage_bar = display.value("show_stage_bar", true);
+        if (ImGui::Checkbox("\xe6\x98\xbe\xe7\xa4\xba\xe9\x98\xb6\xae\xb5\xe6\x9d\xa1",
+                            &show_stage_bar)) {
+            display["show_stage_bar"] = show_stage_bar;
+        }
+        ImGui::SameLine();
+        bool show_progress = display.value("show_progress", true);
+        if (ImGui::Checkbox("\xe6\x98\xbe\xe7\xa4\xba\xe8\xbf\x9b\xe5\xba\xa6\xe6\x9d\xa1",
+                            &show_progress)) {
+            display["show_progress"] = show_progress;
+        }
+        ImGui::SameLine();
+        bool show_arrows = display.value("show_arrows", true);
+        if (ImGui::Checkbox("\xe6\x98\xbe\xe7\xa4\xba\xe7\xae\xad\xe5\xa4\xb4", &show_arrows)) {
+            display["show_arrows"] = show_arrows;
+        }
+
+        int avatar_size = display.value("avatar_size", 56);
+        if (ImGui::InputInt("\xe5\xa4\xb4\xe5\x83\x8f\xe5\xa4\xa7\xe5\xb0\x8f", &avatar_size)) {
+            display["avatar_size"] = std::max(avatar_size, 16);
+        }
+        int stage_bar_height = display.value("stage_bar_height", 28);
+        if (ImGui::InputInt("\xe9\x98\xb6\xe6\xae\xb5\xe6\x9d\xa1\xe9\xab\x98\xe5\xba\xa6",
+                            &stage_bar_height)) {
+            display["stage_bar_height"] = std::max(stage_bar_height, 8);
+        }
+    }
+
+    if (ImGui::CollapsingHeader("\xe6\x8c\x89\xe9\x94\xae\xe6\xa0\xb7\xe5\xbc\x8f")) {
+        json& ks = ensure_object(display, "key_style");
+        int kw = ks.value("key_width", 90);
+        int kh = ks.value("key_height", 44);
+        int ksp = ks.value("spacing", 10);
+        int kr = ks.value("border_radius", 8);
+        if (ImGui::InputInt("\xe5\xae\xbd\xe5\xba\xa6", &kw)) ks["key_width"] = std::max(kw, 20);
+        if (ImGui::InputInt("\xe9\xab\x98\xe5\xba\xa6", &kh)) ks["key_height"] = std::max(kh, 20);
+        if (ImGui::InputInt("\xe9\x97\xb4\xe8\xb7\x9d", &ksp)) ks["spacing"] = std::max(ksp, 0);
+        if (ImGui::InputInt("\xe5\x9c\x86\xe8\xa7\x92", &kr)) ks["border_radius"] = std::max(kr, 0);
+
+        auto edit_color = [&ks](const char* label, const std::string& key,
+                                const char* def) {
+            ImVec4 col = HexToColor(ks.value(key, std::string(def)));
+            if (ImGui::ColorEdit3(label, &col.x)) ks[key] = ColorToHex(col);
+        };
+        edit_color("\xe5\xbd\x93\xe5\x89\x8d\xe6\xad\xa5\xe9\xaa\xa4\xe8\x83\x8c\xe6\x99\xaf",
+                   "active_color", "#F3F4F6");
+        edit_color("\xe5\xb7\xb2\xe5\xae\x8c\xe6\x88\x90\xe8\x83\x8c\xe6\x99\xaf", "done_color",
+                   "#4B5563");
+        edit_color("\xe6\x9c\xaa\xe5\x88\xb0\xe8\xbe\xbe\xe8\x83\x8c\xe6\x99\xaf",
+                   "pending_color", "#1F2937");
+        edit_color("\xe5\xbd\x93\xe5\x89\x8d\xe6\xad\xa5\xe9\xaa\xa4\xe6\x96\x87\xe5\xad\x97",
+                   "active_text_color", "#111827");
+        edit_color("\xe6\x99\xae\xe9\x80\x9a\xe6\x96\x87\xe5\xad\x97", "text_color",
+                   "#F3F4F6");
+        edit_color("\xe7\xae\xad\xe5\xa4\xb4\xe9\xa2\x9c\xe8\x89\xb2", "arrow_color",
+                   "#9CA3AF");
+    }
+
+    if (ImGui::CollapsingHeader("\xe7\x83\xad\xe9\x94\xae")) {
+        static constexpr std::pair<const char*, const char*> kActions[] = {
+            {"toggle_visibility", "\xe6\x98\xbe\xe7\xa4\xba/\xe9\x9a\x90\xe8\x97\x8f"},
+            {"play_pause", "\xe6\x92\xad\xe6\x94\xbe/\xe6\x9a\x82\xe5\x81\x9c"},
+            {"toggle_mode", "\xe5\x88\x87\xe6\x8d\xa2\xe6\xa8\xa1\xe5\xbc\x8f"},
+            {"next_rotation", "\xe4\xb8\x8b\xe4\xb8\x80\xe4\xb8\xaa\xe6\xb5\x81\xe7\xa8\x8b"},
+            {"open_editor", "\xe6\x89\x93\xe5\xbc\x80\xe7\xbc\x96\xe8\xbe\x91\xe5\x99\xa8"},
+            {"move_mode", "\xe7\xa7\xbb\xe5\x8a\xa8\xe6\xa8\xa1\xe5\xbc\x8f"},
+            {"reload_config", "\xe9\x87\x8d\xe8\xbd\xbd\xe9\x85\x8d\xe7\xbd\xae"},
+            {"quit", "\xe9\x80\x80\xe5\x87\xba"},
+        };
+        for (auto [name, label] : kActions) {
+            std::string val = hotkeys.value(name, "");
+            val.resize(64, '\0');
+            if (ImGui::InputText(label, val.data(), val.size())) {
+                hotkeys[name] = val.c_str();
+            }
+        }
+    }
+
+    if (ImGui::CollapsingHeader("\xe8\xbe\x93\xe5\x85\xa5\xe6\xa3\x80\xe6\xb5\x8b")) {
+        int poll_hz = input.value("poll_hz", 60);
+        if (ImGui::SliderInt("\xe8\xbd\xae\xe8\xaf\xa2\xe9\xa2\x91\xe7\x8e\x87(Hz)", &poll_hz,
+                             30, 120)) {
+            input["poll_hz"] = poll_hz;
+        }
+
+        bool foreground_only = input.value("foreground_only", true);
+        if (ImGui::Checkbox("\xe4\xbb\x85\xe6\xb8\xb8\xe6\x88\x8f\xe5\x89\x8d\xe5\x8f\xb0\xe6\x97\xb6\xe6\xa3\x80\xe6\xb5\x8b",
+                            &foreground_only)) {
+            input["foreground_only"] = foreground_only;
+        }
+
+        std::string target = input.value("target_process",
+                                         std::string("Client-Win64-Shipping.exe"));
+        target.resize(128, '\0');
+        if (ImGui::InputText("\xe7\x9b\xae\xe6\xa0\x87\xe8\xbf\x9b\xe7\xa8\x8b\xe5\x90\x8d",
+                             target.data(), target.size())) {
+            input["target_process"] = target.c_str();
+        }
+
+        bool wrong_flash = input.value("wrong_key_flash", true);
+        if (ImGui::Checkbox("\xe9\x94\x99\xe9\x94\xae\xe7\xba\xa2\xe9\x97\xaa", &wrong_flash)) {
+            input["wrong_key_flash"] = wrong_flash;
+        }
+
+        int timeout = input.value("timeout_skip_ms", 0);
+        if (ImGui::InputInt("\xe8\xb6\x85\xe6\x97\xb6\xe8\x87\xaa\xe5\x8a\xa8\xe8\xb7\xb3\xe8\xbf\x87(ms, 0=\xe7\xa6\x81\xe7\x94\xa8)",
+                            &timeout)) {
+            input["timeout_skip_ms"] = std::max(timeout, 0);
+        }
     }
 }
 

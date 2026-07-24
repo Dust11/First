@@ -310,7 +310,7 @@ bool EditorWindow::RenderFrame() {
 
     // 任务 15：编辑器 UI
     ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
-    components_.Draw(config_manager_, apply_callback_);
+    components_.Draw(config_manager_, d3d_device_, apply_callback_);
 
     ImGui::Render();
 

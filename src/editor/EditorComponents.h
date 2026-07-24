@@ -2,12 +2,17 @@
 
 #include "core/ConfigManager.h"
 #include "core/TeamRotation.h"
+#include "utils/ResourceLoader.h"
 
 #include "imgui.h"
+
+#include <d3d11.h>
+#include <wrl/client.h>
 
 #include <functional>
 #include <string_view>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace overlay::editor {
@@ -19,6 +24,7 @@ public:
 
     // 绘制完整编辑器 UI；由 EditorWindow::RenderFrame 每帧调用
     void Draw(overlay::core::ConfigManager* config_manager,
+              ID3D11Device* device,
               const std::function<void()>& apply_callback);
 
 private:
@@ -35,6 +41,17 @@ private:
     void DrawCharacters(overlay::core::TeamRotation& rotation);
     void DrawStages(overlay::core::TeamRotation& rotation);
     void DrawKeySequence(overlay::core::TeamRotation& rotation);
+    void DrawBackgroundImage(overlay::core::ConfigManager* config_manager,
+                             overlay::core::TeamRotation& rotation);
+    void DrawSettings(overlay::core::AppConfig& cfg);
+
+    void UpdateBackgroundPreview(const std::filesystem::path& abs_path,
+                                 ID3D11Device* device);
+    bool CreatePreviewTexture(const overlay::utils::ImageData& data,
+                              ID3D11Device* device,
+                              ID3D11ShaderResourceView** srv_out,
+                              UINT& width_out,
+                              UINT& height_out);
 
     static std::vector<Segment> BuildSegments(
         const overlay::core::TeamRotation& rotation);
@@ -65,6 +82,16 @@ private:
     char new_character_name_[256] = "\xe6\x96\xb0\xe8\xa7\x92\xe8\x89\xb2"; // "新角色"
     char new_segment_character_[256]{};
     bool show_new_segment_popup_ = false;
+
+    // 背景图预览
+    ID3D11Device* device_ = nullptr;
+    overlay::utils::ResourceLoader resource_loader_;
+    bool resource_loader_initialized_ = false;
+    std::string preview_bg_path_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> preview_bg_srv_;
+    UINT preview_bg_width_ = 0;
+    UINT preview_bg_height_ = 0;
+    char bg_path_buffer_[512]{};
 
     // 阶段 / 按键序列的延迟操作（避免在 clipper/循环中直接修改容器）
     int stage_to_delete_ = -1;
