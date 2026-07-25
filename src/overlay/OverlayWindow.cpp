@@ -12,6 +12,8 @@ namespace overlay::overlay {
 namespace {
 
 constexpr wchar_t kClassName[] = L"MingCKeyOverlayWindow";
+// app.rc 中的图标资源 ID
+constexpr int kAppIconId = 101;
 
 } // namespace
 
@@ -34,6 +36,11 @@ bool OverlayWindow::RegisterWindowClass(HINSTANCE hInstance) {
     wc.hCursor = LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW));
     wc.hbrBackground = nullptr;
     wc.lpszClassName = kClassName;
+    // 任务栏/Alt+Tab 图标
+    wc.hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(kAppIconId));
+    wc.hIconSm = static_cast<HICON>(LoadImageW(
+        hInstance, MAKEINTRESOURCEW(kAppIconId), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
 
     if (!RegisterClassExW(&wc)) {
         LOG_ERROR(std::format("RegisterClassExW failed, error={}", GetLastError()));

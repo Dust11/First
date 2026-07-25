@@ -21,6 +21,8 @@ namespace {
 
 constexpr int kInitialWidth = 1000;
 constexpr int kInitialHeight = 700;
+// app.rc 中的图标资源 ID
+constexpr int kAppIconId = 101;
 
 bool FontFileExists(const wchar_t* path) {
     DWORD attr = GetFileAttributesW(path);
@@ -44,6 +46,11 @@ bool EditorWindow::RegisterWindowClass() {
     wc.hCursor = LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW));
     wc.hbrBackground = nullptr;
     wc.lpszClassName = class_name_;
+    // 标题栏/任务栏图标
+    wc.hIcon = LoadIconW(hinstance_, MAKEINTRESOURCEW(kAppIconId));
+    wc.hIconSm = static_cast<HICON>(LoadImageW(
+        hinstance_, MAKEINTRESOURCEW(kAppIconId), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
 
     if (!RegisterClassExW(&wc)) {
         LOG_ERROR(std::format("Editor RegisterClassExW failed, error={}", GetLastError()));

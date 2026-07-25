@@ -94,6 +94,7 @@ add_executable(${PROJECT_NAME} WIN32
     ${HEADERS}
     ${IMGUI_SOURCES}
     app.manifest
+    app.rc
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
