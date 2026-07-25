@@ -17,13 +17,6 @@ namespace overlay::overlay {
 
 namespace {
 
-void GetMaxDisplayResolution(int& width, int& height) {
-    width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-    height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-    if (width <= 0) width = 1920;
-    if (height <= 0) height = 1080;
-}
-
 std::string HResultToString(HRESULT hr) {
     return std::format("HRESULT=0x{:08X}", static_cast<uint32_t>(hr));
 }
@@ -53,9 +46,10 @@ Direct2DRenderer::~Direct2DRenderer() {
     Shutdown();
 }
 
-bool Direct2DRenderer::Initialize(HWND hwnd) {
+bool Direct2DRenderer::Initialize(HWND hwnd, int width, int height) {
     hwnd_ = hwnd;
-    GetMaxDisplayResolution(max_width_, max_height_);
+    width_ = width;
+    height_ = height;
 
     if (!CreateD3DDevice()) return false;
     if (!CreateSwapChain()) return false;
@@ -145,8 +139,8 @@ bool Direct2DRenderer::CreateD3DDevice() {
 
 bool Direct2DRenderer::CreateSwapChain() {
     DXGI_SWAP_CHAIN_DESC1 desc{};
-    desc.Width = static_cast<UINT>(max_width_);
-    desc.Height = static_cast<UINT>(max_height_);
+    desc.Width = static_cast<UINT>(width_);
+    desc.Height = static_cast<UINT>(height_);
     desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     desc.SampleDesc.Count = 1;
     desc.SampleDesc.Quality = 0;
@@ -326,7 +320,7 @@ bool Direct2DRenderer::CheckDeviceLost() {
 bool Direct2DRenderer::RecreateDeviceResources() {
     LOG_INFO("Recreating device resources...");
     ReleaseResources();
-    return Initialize(hwnd_);
+    return Initialize(hwnd_, width_, height_);
 }
 
 void Direct2DRenderer::BeginDraw() {
@@ -379,13 +373,25 @@ void Direct2DRenderer::Present() {
 }
 
 void Direct2DRenderer::Resize(int width, int height) {
+    if (width == width_ && height == height_) return;
     width_ = width;
     height_ = height;
 
     if (!swap_chain_) return;
 
-    // Atomic size strategy: do not call ResizeBuffers, only update DComp clip and target bitmap
+    // Release target bitmap and D2D target before resizing swap chain
     d2d_target_bitmap_.Reset();
+    if (d2d_context_) {
+        d2d_context_->SetTarget(nullptr);
+    }
+
+    HRESULT hr = swap_chain_->ResizeBuffers(0, static_cast<UINT>(width), static_cast<UINT>(height),
+                                            DXGI_FORMAT_UNKNOWN, 0);
+    if (FAILED(hr)) {
+        LOG_ERROR(std::format("IDXGISwapChain2::ResizeBuffers failed: {}", HResultToString(hr)));
+        return;
+    }
+
     if (!CreateRenderTargetBitmap()) {
         LOG_ERROR("Failed to recreate render target bitmap after resize.");
     }

@@ -585,14 +585,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     std::latch render_init_latch(1);
     std::thread render_thread([&ctx, &render_init_latch, window_width, window_height]() {
         HWND hwnd = ctx.window->GetHwnd();
-        if (!ctx.renderer->Initialize(hwnd)) {
+        if (!ctx.renderer->Initialize(hwnd, static_cast<int>(window_width),
+                                      static_cast<int>(window_height))) {
             LOG_ERROR("Failed to initialize Direct2DRenderer.");
             ctx.running.store(false, std::memory_order_release);
             render_init_latch.count_down();
             return;
         }
-        ctx.renderer->Resize(static_cast<int>(window_width),
-                             static_cast<int>(window_height));
         LOG_INFO("Renderer initialized on render thread.");
         render_init_latch.count_down();
         RenderLoopBody(ctx);

@@ -23,7 +23,7 @@ public:
     Direct2DRenderer(const Direct2DRenderer&) = delete;
     Direct2DRenderer& operator=(const Direct2DRenderer&) = delete;
 
-    bool Initialize(HWND hwnd);
+    bool Initialize(HWND hwnd, int width, int height);
     void Shutdown();
 
     // Device lost detection and recovery
@@ -82,10 +82,6 @@ private:
     int width_ = 0;
     int height_ = 0;
     bool visible_ = true;
-
-    // Atomic size swap chain: created at max display resolution, clip controls visible area
-    int max_width_ = 0;
-    int max_height_ = 0;
 
     Microsoft::WRL::ComPtr<ID3D11Device> d3d_device_;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> d3d_context_;
