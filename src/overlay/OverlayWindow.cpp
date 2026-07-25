@@ -55,8 +55,9 @@ bool OverlayWindow::Create(HINSTANCE hInstance, const std::wstring& title, int x
 
     if (!RegisterWindowClass(hInstance)) return false;
 
+    // 不用 WS_EX_TOOLWINDOW，让窗口出现在任务栏与 Alt+Tab 中
     DWORD ex_style = WS_EX_NOREDIRECTIONBITMAP | WS_EX_TRANSPARENT |
-                     WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+                     WS_EX_TOPMOST | WS_EX_NOACTIVATE;
     DWORD style = WS_POPUP;
 
     hwnd_ = CreateWindowExW(
