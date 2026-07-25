@@ -398,8 +398,8 @@ static void RenderLoop(AppContext& ctx) {
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     fs::path exe_dir = GetExeDirectory();
-    overlay::utils::Logger::Instance().Init(exe_dir / "overlay.log");
 
+    // 解析命令行参数（日志初始化前完成，便于单实例检测时跳过弹窗）
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     bool smoke_test = false;
@@ -407,12 +407,40 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         if (std::wstring_view(argv[i]) == L"--smoke-test") {
             smoke_test = true;
         } else if (std::wstring_view(argv[i]) == L"--help") {
-            LOG_INFO("Usage: MingCKeyOverlay.exe [--smoke-test] [--help]");
             LocalFree(argv);
+            MessageBoxW(nullptr,
+                        L"Usage: MingCKeyOverlay.exe [--smoke-test] [--help]",
+                        L"MingC Key Overlay",
+                        MB_OK | MB_ICONINFORMATION);
             return 0;
         }
     }
     LocalFree(argv);
+
+    // 单实例检测：已有实例运行时激活其窗口并退出
+    constexpr wchar_t kSingleInstanceMutexName[] =
+        L"MingCKeyOverlay_SingleInstance_Mutex";
+    HANDLE hMutex = CreateMutexW(nullptr, FALSE, kSingleInstanceMutexName);
+    if (hMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        HWND hwnd = FindWindowW(overlay::overlay::OverlayWindow::ClassName(),
+                                nullptr);
+        if (hwnd) {
+            ShowWindow(hwnd, SW_SHOWNA);
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+            SetForegroundWindow(hwnd);
+        }
+        if (!smoke_test) {
+            MessageBoxW(nullptr,
+                        L"程序已在运行，已切换到已有窗口。",
+                        L"MingC Key Overlay",
+                        MB_OK | MB_ICONINFORMATION);
+        }
+        CloseHandle(hMutex);
+        return 0;
+    }
+
+    overlay::utils::Logger::Instance().Init(exe_dir / "overlay.log");
 
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(hr)) {
@@ -482,10 +510,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         visual_renderer.ComputeWindowSize(scale, window_width, window_height);
     }
 
+    constexpr wchar_t kOverlayWindowTitle[] = L"MingC Key Overlay";
+
     // 创建 overlay 窗口
     overlay::overlay::OverlayWindow window;
     ctx.window = &window;
-    if (!window.Create(hInstance, L"MingC Key Overlay",
+    if (!window.Create(hInstance, kOverlayWindowTitle,
                        100, 100,
                        static_cast<int>(window_width),
                        static_cast<int>(window_height))) {

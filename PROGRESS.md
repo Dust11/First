@@ -119,6 +119,20 @@
   - 修改 `src/main.cpp`、`CMakeLists.txt`、`README.md`。
   - 新增 `scripts/build-and-test.bat`、`scripts/package-release.bat`。
 
+### 单实例检测修复（Task 20 后续）
+- 状态：已完成（待推送）。
+- 问题：重复启动 `MingCKeyOverlay.exe` 时，第二个实例因全局热键已被占用而注册失败（`RegisterHotKey error=1409`），导致看起来像“程序没出来”。
+- 修复：
+  - `src/main.cpp` 在初始化前通过命名互斥量 `MingCKeyOverlay_SingleInstance_Mutex` 检测是否已有实例运行。
+  - 若已有实例，通过 `FindWindowW(OverlayWindow::ClassName())` 找到已有窗口并激活到最前，随后退出。
+  - 非 `--smoke-test` 模式下弹出提示“程序已在运行，已切换到已有窗口。”
+  - `src/overlay/OverlayWindow` 新增静态 `ClassName()`，供外部查找窗口使用。
+- 验证：
+  - `scripts/build-and-test.bat` 通过。
+  - 手动测试：先启动一个实例，再启动第二个实例，第二个实例退出码 0，且仅保留一个进程。
+- 代码改动：
+  - 修改 `src/main.cpp`、`src/overlay/OverlayWindow.h/.cpp`。
+
 ## 进行中任务
 
 无。

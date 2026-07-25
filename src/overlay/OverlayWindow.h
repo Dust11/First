@@ -22,6 +22,9 @@ public:
                 int width, int height);
     void Destroy();
 
+    // 窗口类名，用于单实例检测时查找已有窗口
+    static const wchar_t* ClassName();
+
     void Show();
     void Hide();
     bool IsVisible() const { return visible_; }

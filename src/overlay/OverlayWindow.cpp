@@ -17,6 +17,10 @@ constexpr wchar_t kClassName[] = L"MingCKeyOverlayWindow";
 
 OverlayWindow::OverlayWindow() = default;
 
+const wchar_t* OverlayWindow::ClassName() {
+    return kClassName;
+}
+
 OverlayWindow::~OverlayWindow() {
     Destroy();
 }
