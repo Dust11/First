@@ -94,7 +94,6 @@ private:
     Microsoft::WRL::ComPtr<IDXGIFactory2> dxgi_factory_;
 
     Microsoft::WRL::ComPtr<IDXGISwapChain2> swap_chain_;
-    HANDLE waitable_object_ = nullptr;
 
     Microsoft::WRL::ComPtr<ID2D1Factory2> d2d_factory_;
     Microsoft::WRL::ComPtr<ID2D1Device1> d2d_device_;

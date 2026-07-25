@@ -18,6 +18,7 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <latch>
 #include <format>
 #include <memory>
 #include <mutex>
@@ -299,7 +300,7 @@ static LRESULT CALLBACK OverlaySubclassProc(HWND hWnd, UINT msg, WPARAM wParam, 
     return DefSubclassProc(hWnd, msg, wParam, lParam);
 }
 
-static void RenderLoop(AppContext& ctx) {
+static void RenderLoopBody(AppContext& ctx) {
     using clock = std::chrono::steady_clock;
     auto last_time = clock::now();
     auto last_poll = clock::now();
@@ -580,13 +581,32 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     window.Show();
     LOG_INFO("OverlayWindow shown.");
 
-    HWND hwnd = window.GetHwnd();
-    if (!renderer.Initialize(hwnd)) {
-        LOG_ERROR("Failed to initialize Direct2DRenderer.");
+    // 在渲染线程中初始化 D2D/DComp 资源（DComp 设备有线程亲和性）
+    std::latch render_init_latch(1);
+    std::thread render_thread([&ctx, &render_init_latch, window_width, window_height]() {
+        HWND hwnd = ctx.window->GetHwnd();
+        if (!ctx.renderer->Initialize(hwnd)) {
+            LOG_ERROR("Failed to initialize Direct2DRenderer.");
+            ctx.running.store(false, std::memory_order_release);
+            render_init_latch.count_down();
+            return;
+        }
+        ctx.renderer->Resize(static_cast<int>(window_width),
+                             static_cast<int>(window_height));
+        LOG_INFO("Renderer initialized on render thread.");
+        render_init_latch.count_down();
+        RenderLoopBody(ctx);
+    });
+
+    render_init_latch.wait();
+    if (!ctx.running.load(std::memory_order_acquire)) {
+        LOG_ERROR("Render thread initialization failed.");
+        render_thread.join();
         CoUninitialize();
         return 1;
     }
-    renderer.Resize(static_cast<int>(window_width), static_cast<int>(window_height));
+
+    HWND hwnd = window.GetHwnd();
 
     // 初始化编辑器窗口（延迟到首次打开时再创建 D3D/ImGui 资源）
     editor.Initialize(hwnd, renderer.GetD3DDevice());
@@ -635,8 +655,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
             PostMessageW(hwnd, WM_CLOSE, 0, 0);
         });
     }
-
-    std::thread render_thread(RenderLoop, std::ref(ctx));
 
     window.RunMessageLoop();
     LOG_INFO("Message loop exited.");

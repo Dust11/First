@@ -83,10 +83,6 @@ void Direct2DRenderer::ReleaseResources() {
     d2d_device_.Reset();
     d2d_factory_.Reset();
 
-    if (waitable_object_) {
-        CloseHandle(waitable_object_);
-        waitable_object_ = nullptr;
-    }
     swap_chain_.Reset();
 
     dcomp_visual_.Reset();
@@ -158,7 +154,6 @@ bool Direct2DRenderer::CreateSwapChain() {
     desc.BufferCount = 2;
     desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
     desc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
-    desc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
 
     Microsoft::WRL::ComPtr<IDXGISwapChain1> swap_chain1;
     HRESULT hr = dxgi_factory_->CreateSwapChainForComposition(
@@ -174,16 +169,6 @@ bool Direct2DRenderer::CreateSwapChain() {
         LOG_ERROR(std::format("IDXGISwapChain1::QueryInterface(IDXGISwapChain2) failed: {}",
                               HResultToString(hr)));
         return false;
-    }
-
-    hr = swap_chain_->SetMaximumFrameLatency(1);
-    if (FAILED(hr)) {
-        LOG_WARN(std::format("SetMaximumFrameLatency failed: {}", HResultToString(hr)));
-    }
-
-    waitable_object_ = swap_chain_->GetFrameLatencyWaitableObject();
-    if (!waitable_object_) {
-        LOG_WARN("GetFrameLatencyWaitableObject returned nullptr.");
     }
 
     return true;
@@ -347,11 +332,6 @@ bool Direct2DRenderer::RecreateDeviceResources() {
 void Direct2DRenderer::BeginDraw() {
     if (!d2d_context_) return;
 
-    if (waitable_object_) {
-        // 使用超时等待避免渲染线程在退出时无限阻塞
-        WaitForSingleObject(waitable_object_, 50);
-    }
-
     // DXGI flip 模型在 Present 后 surface 会变化，需要重新创建 D2D target bitmap
     if (!d2d_target_bitmap_) {
         if (!CreateRenderTargetBitmap()) {
@@ -374,6 +354,11 @@ void Direct2DRenderer::EndDraw() {
 void Direct2DRenderer::Present() {
     if (!swap_chain_) return;
 
+    // Ensure DComp re-composites the updated swap chain content before presenting.
+    if (dcomp_device_) {
+        dcomp_device_->Commit();
+    }
+
     DXGI_PRESENT_PARAMETERS params{};
     RECT dirty_rect = {0, 0, width_, height_};
     params.DirtyRectsCount = 1;
@@ -383,11 +368,6 @@ void Direct2DRenderer::Present() {
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
         LOG_WARN(std::format("Device removed/reset during Present: {}",
                              HResultToString(hr)));
-    }
-
-    // Ensure DComp re-composites the updated swap chain content.
-    if (dcomp_device_) {
-        dcomp_device_->Commit();
     }
 
     // DXGI flip 模型在 Present 后 surface 已变化，释放旧的 target bitmap，

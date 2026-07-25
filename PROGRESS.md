@@ -167,13 +167,32 @@
 - 代码改动：
   - 修改 `src/overlay/Direct2DRenderer.cpp`。
 
+### 渲染线程初始化与 DComp Commit 顺序最终修复（Task 20 后续）
+- 状态：已完成，已重新打包，准备推送。
+- 问题：在部分机器上 overlay 进程在运行但窗口完全透明，使用 `CopyFromScreen`/`PrintWindow` 验证不到任何像素；日志显示初始化成功，说明 DWM/DComp 没有把交换链内容合成为可见像素。
+- 根因：
+  1. `Direct2DRenderer` 在主线程初始化，但 DComp 设备对创建线程有线程亲和性要求，后续在渲染线程调用 `Commit`/`Present` 时合成可能不生效。
+  2. `IDCompositionDevice::Commit()` 原本放在 `IDXGISwapChain2::Present1()` 之后，DWM 在某些配置下不会把已 Present 的帧重新合成到窗口，导致透明。
+- 修复：
+  - `src/main.cpp` 把 `renderer.Initialize(hwnd)` 与 `renderer.Resize(...)` 移到独立的渲染线程中执行，确保 DComp/D2D 资源从创建到提交都在同一线程。
+  - 使用 `std::latch` 等待渲染线程初始化完成；若失败则主线程优雅退出。
+  - `src/overlay/Direct2DRenderer.cpp` 中把 `dcomp_device_->Commit()` 调整到 `swap_chain_->Present1()` 之前调用，确保 DComp 先拿到最新内容再呈现。
+  - 同时移除了实验性的 `DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT` 与 `waitable_object_` 成员，避免潜在阻塞与句柄泄漏。
+- 验证：
+  - `scripts/build-and-test.bat` 通过（Debug/Release 均 0 错误，`--smoke-test` 退出码 0）。
+  - `scripts/package-release.bat` 通过，重新生成 `build/release/MingCKeyOverlay-0.1.0-win64.zip`。
+  - 本机诊断捕获显示窗口实际绘制出深色底栏与白色文字，不再是全透明。
+- 代码改动：
+  - 修改 `src/main.cpp`、`src/overlay/Direct2DRenderer.cpp`、`src/overlay/Direct2DRenderer.h`。
+  - 更新 `PROGRESS.md`。
+
 ## 进行中任务
 
 无。
 
 ## 未推送提交
 
-无。
+- 待提交：`src/main.cpp`、`src/overlay/Direct2DRenderer.cpp`、`.h`、`PROGRESS.md`。
 
 ## 待办任务
 
