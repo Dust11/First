@@ -143,6 +143,18 @@
 - 代码改动：
   - 修改 `src/overlay/Direct2DRenderer.cpp`。
 
+### 窗口居中与 DComp 提交修复（Task 20 后续）
+- 状态：已完成（待推送）。
+- 问题：窗口默认位置固定在 `(100, 100)`，在多显示器或特殊坐标布局下可能跑到不可见区域；另外 `Present` 后未调用 `IDCompositionDevice::Commit`，某些情况下 DComp 不会立即合成新内容。
+- 修复：
+  - `src/main.cpp` 新增 `CenterWindowOnPrimaryMonitor()`，启动时将 overlay 窗口居中到主显示器工作区。
+  - `src/overlay/Direct2DRenderer.cpp` 在每帧 `Present1` 后调用 `dcomp_device_->Commit()`，确保 DComp 及时合成。
+- 验证：
+  - `scripts/build-and-test.bat` 通过。
+  - `scripts/package-release.bat` 通过，ZIP 已重新生成。
+- 代码改动：
+  - 修改 `src/main.cpp`、`src/overlay/Direct2DRenderer.cpp`。
+
 ## 进行中任务
 
 无。

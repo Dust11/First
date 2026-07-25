@@ -376,6 +376,11 @@ void Direct2DRenderer::Present() {
         LOG_WARN(std::format("Device removed/reset during Present: {}",
                              HResultToString(hr)));
     }
+
+    // Ensure DComp re-composites the updated swap chain content.
+    if (dcomp_device_) {
+        dcomp_device_->Commit();
+    }
 }
 
 void Direct2DRenderer::Resize(int width, int height) {

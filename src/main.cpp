@@ -14,6 +14,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <commctrl.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -396,6 +397,26 @@ static void RenderLoop(AppContext& ctx) {
     }
 }
 
+static void CenterWindowOnPrimaryMonitor(int window_width, int window_height,
+                                         int& out_x, int& out_y) {
+    out_x = 100;
+    out_y = 100;
+
+    POINT pt{0, 0};
+    HMONITOR hMonitor = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
+    if (!hMonitor) return;
+
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    if (!GetMonitorInfoW(hMonitor, &info)) return;
+
+    const RECT& work = info.rcWork;
+    int work_w = static_cast<int>(work.right - work.left);
+    int work_h = static_cast<int>(work.bottom - work.top);
+    out_x = work.left + std::max(0, (work_w - window_width) / 2);
+    out_y = work.top + std::max(0, (work_h - window_height) / 2);
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     fs::path exe_dir = GetExeDirectory();
 
@@ -512,11 +533,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
 
     constexpr wchar_t kOverlayWindowTitle[] = L"MingC Key Overlay";
 
+    int window_x = 100;
+    int window_y = 100;
+    CenterWindowOnPrimaryMonitor(static_cast<int>(window_width),
+                                 static_cast<int>(window_height),
+                                 window_x, window_y);
+
     // 创建 overlay 窗口
     overlay::overlay::OverlayWindow window;
     ctx.window = &window;
     if (!window.Create(hInstance, kOverlayWindowTitle,
-                       100, 100,
+                       window_x, window_y,
                        static_cast<int>(window_width),
                        static_cast<int>(window_height))) {
         LOG_ERROR("Failed to create OverlayWindow.");
