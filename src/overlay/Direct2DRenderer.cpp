@@ -195,7 +195,7 @@ bool Direct2DRenderer::CreateD2DResources() {
     options.debugLevel = D2D1_DEBUG_LEVEL_WARNING;
 #endif
 
-    HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, options,
+    HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, options,
                                    d2d_factory_.GetAddressOf());
     if (FAILED(hr)) {
         LOG_ERROR(std::format("D2D1CreateFactory failed: {}", HResultToString(hr)));

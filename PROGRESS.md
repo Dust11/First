@@ -133,6 +133,16 @@
 - 代码改动：
   - 修改 `src/main.cpp`、`src/overlay/OverlayWindow.h/.cpp`。
 
+### D2D 工厂线程模式修复（Task 20 后续）
+- 状态：已完成（待推送）。
+- 问题：渲染线程与 D2D 资源创建线程不是同一个线程，但 `Direct2DRenderer` 使用 `D2D1_FACTORY_TYPE_SINGLE_THREADED`，跨线程访问 D2D 设备上下文可能导致首帧/所有内容无法显示。
+- 修复：将 `D2D1CreateFactory` 的工厂类型改为 `D2D1_FACTORY_TYPE_MULTI_THREADED`。
+- 验证：
+  - `scripts/build-and-test.bat` 通过。
+  - `scripts/package-release.bat` 通过，ZIP 已重新生成。
+- 代码改动：
+  - 修改 `src/overlay/Direct2DRenderer.cpp`。
+
 ## 进行中任务
 
 无。
