@@ -209,13 +209,37 @@
   - 修改 `src/overlay/OverlayWindow.cpp`。
 
 ### 任务栏显示修复（Task 20 后续）
-- 状态：已完成（本地验证通过）。
+- 状态：已完成并已推送（commit `f94623f`，已推送到 `feat/implementation`）。
 - 需求：用户希望程序出现在底部任务栏（此前使用 `WS_EX_TOOLWINDOW` 导致任务栏与 Alt+Tab 均不显示）。
 - 修复：`OverlayWindow::Create` 移除 `WS_EX_TOOLWINDOW`，保留 `WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_NOREDIRECTIONBITMAP`。
-- 验证：PowerShell 查询窗口扩展样式 `exstyle=0x08200028`，`TOOLWINDOW(0x80)=False`，`TOPMOST/TRANSPARENT` 保持不变。
-- 注意：窗口被 `Ctrl+Shift+H` 隐藏时任务栏按钮会随窗口隐藏（Win32 标准行为）；exe 未嵌入图标资源，任务栏显示系统默认图标。
+- 验证：PowerShell 查询窗口扩展样式 `exstyle=0x08200028`，`TOOLWINDOW(0x80)=False`；UI Automation 枚举任务栏按钮确认出现 “MingCKeyOverlay.exe” 条目。
+- 注意：窗口被 `Ctrl+Shift+H` 隐藏时任务栏按钮会随窗口隐藏（Win32 标准行为）。
 - 代码改动：
   - 修改 `src/overlay/OverlayWindow.cpp`。
+
+### 编辑器打开未响应修复（Task 20 后续）
+- 状态：已完成并已推送（commit `36ccdc0`，已推送到 `feat/implementation`）。
+- 问题：按 `Ctrl+Shift+E` 打开编辑器后窗口卡住、系统标记“未响应”。
+- 根因：窗口消息按线程亲和性投递。编辑器窗口在渲染线程的 `RenderFrame()` 中惰性创建，消息进入渲染线程队列，而渲染线程没有消息循环，窗口永远收不到输入。
+- 修复：
+  - `EditorWindow::Show()`（主线程热键触发）中同步创建窗口并初始化 ImGui backend；`RenderFrame()`（渲染线程）只负责渲染。
+  - `WM_SIZE` 改为记录挂起尺寸（mutex 保护），由渲染线程在 `RenderFrame` 中应用 `ResizeBuffers`，避免跨线程访问 `rtv_`。
+  - `open_` 改为 `std::atomic<bool>`，保证跨线程发布安全。
+- 验证：脚本模拟 `Ctrl+Shift+E`，编辑器窗口创建成功、`IsHungAppWindow=False`、WM_NULL 往返 3ms，截图确认 ImGui 界面正常渲染。
+- 代码改动：
+  - 修改 `src/editor/EditorWindow.h/.cpp`。
+
+### 应用图标嵌入（Task 20 后续）
+- 状态：已完成（本地验证通过）。
+- 需求：任务栏按钮此前显示系统默认图标，难以辨认。
+- 修复：
+  - 新增 `app.ico`（PowerShell/System.Drawing 生成：深色圆角面板 + 红色阶段条 + 白色 K 键帽，16/24/32/48/64 多尺寸，32bpp alpha）。
+  - 新增 `app.rc`（资源 ID 101）并加入 `CMakeLists.txt` 源列表，exe 嵌入图标。
+  - `OverlayWindow` 与 `EditorWindow` 的窗口类设置 `hIcon`/`hIconSm`。
+- 验证：`Icon.ExtractAssociatedIcon` 确认 exe 图标；编辑器标题栏截图显示 K 图标。
+- 代码改动：
+  - 新增 `app.ico`、`app.rc`。
+  - 修改 `CMakeLists.txt`、`src/overlay/OverlayWindow.cpp`、`src/editor/EditorWindow.cpp`。
 
 ## 进行中任务
 
