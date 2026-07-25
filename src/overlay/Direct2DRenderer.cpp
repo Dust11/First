@@ -352,6 +352,14 @@ void Direct2DRenderer::BeginDraw() {
         WaitForSingleObject(waitable_object_, 50);
     }
 
+    // DXGI flip 模型在 Present 后 surface 会变化，需要重新创建 D2D target bitmap
+    if (!d2d_target_bitmap_) {
+        if (!CreateRenderTargetBitmap()) {
+            LOG_ERROR("Failed to recreate render target bitmap in BeginDraw.");
+            return;
+        }
+    }
+
     d2d_context_->BeginDraw();
 }
 
@@ -380,6 +388,13 @@ void Direct2DRenderer::Present() {
     // Ensure DComp re-composites the updated swap chain content.
     if (dcomp_device_) {
         dcomp_device_->Commit();
+    }
+
+    // DXGI flip 模型在 Present 后 surface 已变化，释放旧的 target bitmap，
+    // 下次 BeginDraw 会重新创建。
+    d2d_target_bitmap_.Reset();
+    if (d2d_context_) {
+        d2d_context_->SetTarget(nullptr);
     }
 }
 
