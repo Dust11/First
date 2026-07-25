@@ -208,6 +208,15 @@
 - 代码改动：
   - 修改 `src/overlay/OverlayWindow.cpp`。
 
+### 任务栏显示修复（Task 20 后续）
+- 状态：已完成（本地验证通过）。
+- 需求：用户希望程序出现在底部任务栏（此前使用 `WS_EX_TOOLWINDOW` 导致任务栏与 Alt+Tab 均不显示）。
+- 修复：`OverlayWindow::Create` 移除 `WS_EX_TOOLWINDOW`，保留 `WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_NOREDIRECTIONBITMAP`。
+- 验证：PowerShell 查询窗口扩展样式 `exstyle=0x08200028`，`TOOLWINDOW(0x80)=False`，`TOPMOST/TRANSPARENT` 保持不变。
+- 注意：窗口被 `Ctrl+Shift+H` 隐藏时任务栏按钮会随窗口隐藏（Win32 标准行为）；exe 未嵌入图标资源，任务栏显示系统默认图标。
+- 代码改动：
+  - 修改 `src/overlay/OverlayWindow.cpp`。
+
 ## 进行中任务
 
 无。
