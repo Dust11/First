@@ -168,7 +168,7 @@
   - 修改 `src/overlay/Direct2DRenderer.cpp`。
 
 ### 渲染线程初始化与 DComp Commit 顺序最终修复（Task 20 后续）
-- 状态：已完成，已重新打包，准备推送。
+- 状态：已完成并已推送（commit `1299635`，已推送到 `feat/implementation`）。
 - 问题：在部分机器上 overlay 进程在运行但窗口完全透明，使用 `CopyFromScreen`/`PrintWindow` 验证不到任何像素；日志显示初始化成功，说明 DWM/DComp 没有把交换链内容合成为可见像素。
 - 根因：
   1. `Direct2DRenderer` 在主线程初始化，但 DComp 设备对创建线程有线程亲和性要求，后续在渲染线程调用 `Commit`/`Present` 时合成可能不生效。
@@ -186,13 +186,35 @@
   - 修改 `src/main.cpp`、`src/overlay/Direct2DRenderer.cpp`、`src/overlay/Direct2DRenderer.h`。
   - 更新 `PROGRESS.md`。
 
+### Swap chain 大小修复（Task 20 后续）
+- 状态：已完成并已推送（commit `09f92f7`，已推送到 `feat/implementation`）。
+- 问题：overlay 窗口仍然完全透明，屏幕捕获显示窗口区域可以看到后面的游戏/桌面内容。
+- 根因：`CreateSwapChain` 使用虚拟屏幕最大尺寸（如 2560x1440）创建 swap chain，但窗口只有 721x72。DComp 合成时大尺寸 swap chain 与小窗口的映射出现问题，导致内容无法正确显示。
+- 修复：
+  - `Direct2DRenderer::Initialize` 增加 `width`/`height` 参数，swap chain 创建为与窗口完全相同的尺寸。
+  - 移除 `max_width_`/`max_height_` 成员与 `GetMaxDisplayResolution` 函数。
+  - `Resize` 改为使用 `IDXGISwapChain2::ResizeBuffers` 正确调整 swap chain 大小。
+  - 移除 `DXGI_SCALING_NONE`（该标志导致 `CreateSwapChainForComposition` 返回 `DXGI_ERROR_INVALID_CALL`）。
+- 验证：
+  - `scripts/build-and-test.bat` 通过。
+  - 屏幕捕获确认 overlay 正常显示深色背景、阶段条、头像、按键序列。
+- 代码改动：
+  - 修改 `src/main.cpp`、`src/overlay/Direct2DRenderer.cpp`、`src/overlay/Direct2DRenderer.h`。
+
+### 拖拽坐标修复（Task 20 后续）
+- 状态：已完成并已推送（commit `92e0c76`，已推送到 `feat/implementation`）。
+- 问题：移动模式下拖拽 overlay 不跟手。
+- 修复：`WM_LBUTTONDOWN`/`WM_MOUSEMOVE` 改用 `GetCursorPos` 获取屏幕坐标计算位移，避免 `GET_X_LPARAM` 客户端坐标在 PerMonitorV2 DPI 感知窗口下可能存在的坐标系不一致。
+- 代码改动：
+  - 修改 `src/overlay/OverlayWindow.cpp`。
+
 ## 进行中任务
 
 无。
 
 ## 未推送提交
 
-- 待提交：`src/main.cpp`、`src/overlay/Direct2DRenderer.cpp`、`.h`、`PROGRESS.md`。
+无。
 
 ## 待办任务
 
