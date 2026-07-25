@@ -120,7 +120,7 @@
   - 新增 `scripts/build-and-test.bat`、`scripts/package-release.bat`。
 
 ### 单实例检测修复（Task 20 后续）
-- 状态：已完成（待推送）。
+- 状态：已完成并已推送（commit `4622489`，已推送到 `feat/implementation`）。
 - 问题：重复启动 `MingCKeyOverlay.exe` 时，第二个实例因全局热键已被占用而注册失败（`RegisterHotKey error=1409`），导致看起来像“程序没出来”。
 - 修复：
   - `src/main.cpp` 在初始化前通过命名互斥量 `MingCKeyOverlay_SingleInstance_Mutex` 检测是否已有实例运行。
