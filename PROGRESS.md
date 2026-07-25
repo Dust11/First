@@ -156,7 +156,7 @@
   - 修改 `src/main.cpp`、`src/overlay/Direct2DRenderer.cpp`。
 
 ### D2D target bitmap 重建修复（Task 20 后续）
-- 状态：已完成（待推送）。
+- 状态：已完成并已推送（commit `7c2ae90`，已推送到 `feat/implementation`）。
 - 问题：使用 DXGI flip 模型时，调用 `Present1` 后 back buffer surface 会变化，但 `Direct2DRenderer` 只创建一次 `ID2D1Bitmap1` target bitmap，后续绘制可能画到失效的 surface 上，导致窗口内容完全透明。
 - 修复：
   - 每帧 `Present` 后释放 `d2d_target_bitmap_` 并将 context target 置空。
