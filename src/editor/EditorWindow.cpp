@@ -252,7 +252,7 @@ void EditorWindow::Shutdown() {
     }
 
     initialized_ = false;
-    open_ = false;
+    open_.store(false, std::memory_order_release);
 }
 
 void EditorWindow::SetConfigManager(overlay::core::ConfigManager* config_manager) {
@@ -265,13 +265,26 @@ void EditorWindow::SetApplyCallback(std::function<void()> callback) {
 
 void EditorWindow::Show() {
     if (!initialized_) return;
-    pending_show_ = true;
-    open_ = true;
+    if (open_.load(std::memory_order_acquire)) return;
+
+    // 窗口必须在主线程创建（Show 由主线程热键消息触发）：
+    // 窗口消息按线程亲和性投递，若窗口在渲染线程创建，其消息会进入
+    // 渲染线程队列，而渲染线程没有消息循环，导致编辑器“未响应”。
+    if (!hwnd_) {
+        if (!CreateEditorWindow()) return;
+        ImGui_ImplWin32_Init(hwnd_);
+        ImGui_ImplDX11_Init(d3d_device_, d3d_context_);
+        imgui_backends_initialized_ = true;
+        CreateSwapChain();
+    }
+
+    ShowWindow(hwnd_, SW_SHOW);
+    SetForegroundWindow(hwnd_);
+    open_.store(true, std::memory_order_release);
 }
 
 void EditorWindow::Hide() {
-    open_ = false;
-    pending_show_ = false;
+    open_.store(false, std::memory_order_release);
     components_.OnEditorHidden();
     if (hwnd_) {
         ShowWindow(hwnd_, SW_HIDE);
@@ -279,32 +292,32 @@ void EditorWindow::Hide() {
 }
 
 bool EditorWindow::IsOpen() const {
-    return open_;
+    return open_.load(std::memory_order_acquire);
 }
 
 bool EditorWindow::RenderFrame() {
-    if (!initialized_ || !open_) return false;
-
-    if (pending_show_ && !hwnd_) {
-        if (!CreateEditorWindow()) {
-            open_ = false;
-            pending_show_ = false;
-            return false;
-        }
-        ImGui_ImplWin32_Init(hwnd_);
-        ImGui_ImplDX11_Init(d3d_device_, d3d_context_);
-        imgui_backends_initialized_ = true;
-        CreateSwapChain();
-        ShowWindow(hwnd_, SW_SHOWNA);
-        pending_show_ = false;
-    }
-
-    if (!hwnd_ || !swap_chain_ || !rtv_) return open_;
+    if (!initialized_ || !open_.load(std::memory_order_acquire)) return false;
+    if (!hwnd_ || !swap_chain_ || !rtv_) return open_.load(std::memory_order_acquire);
 
     // 处理窗口关闭（WM_CLOSE 会设置 open_ = false）
     if (!IsWindow(hwnd_)) {
-        open_ = false;
+        open_.store(false, std::memory_order_release);
         return false;
+    }
+
+    // 应用主线程挂起的窗口尺寸变更（ResizeSwapChain 涉及 rtv_，
+    // 必须与下方渲染在同一线程执行）
+    int pending_w = 0;
+    int pending_h = 0;
+    {
+        std::lock_guard<std::mutex> lock(resize_mutex_);
+        pending_w = pending_resize_w_;
+        pending_h = pending_resize_h_;
+        pending_resize_w_ = 0;
+        pending_resize_h_ = 0;
+    }
+    if (pending_w > 0 && pending_h > 0 && (pending_w != width_ || pending_h != height_)) {
+        ResizeSwapChain(pending_w, pending_h);
     }
 
     ImGui_ImplDX11_NewFrame();
@@ -323,7 +336,7 @@ bool EditorWindow::RenderFrame() {
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
     swap_chain_->Present(1, 0);
-    return open_;
+    return open_.load(std::memory_order_acquire);
 }
 
 LRESULT CALLBACK EditorWindow::WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -348,13 +361,16 @@ LRESULT EditorWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
 
     switch (msg) {
     case WM_SIZE:
-        if (d3d_device_ != nullptr && wParam != SIZE_MINIMIZED) {
-            ResizeSwapChain(LOWORD(lParam), HIWORD(lParam));
+        if (wParam != SIZE_MINIMIZED) {
+            // 只记录尺寸，实际 ResizeBuffers 由渲染线程在 RenderFrame 中执行
+            std::lock_guard<std::mutex> lock(resize_mutex_);
+            pending_resize_w_ = static_cast<int>(LOWORD(lParam));
+            pending_resize_h_ = static_cast<int>(HIWORD(lParam));
         }
         return 0;
 
     case WM_CLOSE:
-        open_ = false;
+        open_.store(false, std::memory_order_release);
         ShowWindow(hwnd_, SW_HIDE);
         return 0;
 

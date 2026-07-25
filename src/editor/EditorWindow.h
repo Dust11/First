@@ -9,6 +9,8 @@
 #include <windows.h>
 
 #include <functional>
+#include <atomic>
+#include <mutex>
 
 namespace overlay::editor {
 
@@ -56,11 +58,17 @@ private:
     ID3D11RenderTargetView* rtv_ = nullptr;
 
     bool initialized_ = false;
-    bool open_ = false;
-    bool pending_show_ = false;
+    // open_ 由主线程（Show/Hide/WM_CLOSE）写入、渲染线程（RenderFrame）读取
+    std::atomic<bool> open_{false};
     bool imgui_backends_initialized_ = false;
     int width_ = 1000;
     int height_ = 700;
+
+    // 主线程 WM_SIZE 只记录目标尺寸，渲染线程在 RenderFrame 中应用，
+    // 避免与渲染线程并发访问 rtv_ / d3d_context_
+    std::mutex resize_mutex_;
+    int pending_resize_w_ = 0;
+    int pending_resize_h_ = 0;
 
     overlay::core::ConfigManager* config_manager_ = nullptr;
     std::function<void()> apply_callback_;
