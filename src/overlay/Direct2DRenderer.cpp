@@ -4,18 +4,18 @@
 #include "utils/ResourceLoader.h"
 
 #include <algorithm>
+#include <d2d1effects.h>
 #include <format>
+
+// Manually define CLSID_D2D1Scale to avoid initguid.h side effects.
+// {9DAF9369-3846-4D0E-A44E-0C607934A5D7}
+static const GUID CLSID_D2D1Scale_Local =
+    {0x9daf9369, 0x3846, 0x4d0e, {0xa4, 0x4e, 0x0c, 0x60, 0x79, 0x34, 0xa5, 0xd7}};
+#define CLSID_D2D1Scale CLSID_D2D1Scale_Local
 
 namespace overlay::overlay {
 
 namespace {
-
-void GetMaxDisplayResolution(int& width, int& height) {
-    width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-    height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-    if (width <= 0) width = 1920;
-    if (height <= 0) height = 1080;
-}
 
 std::string HResultToString(HRESULT hr) {
     return std::format("HRESULT=0x{:08X}", static_cast<uint32_t>(hr));
@@ -46,9 +46,10 @@ Direct2DRenderer::~Direct2DRenderer() {
     Shutdown();
 }
 
-bool Direct2DRenderer::Initialize(HWND hwnd) {
+bool Direct2DRenderer::Initialize(HWND hwnd, int width, int height) {
     hwnd_ = hwnd;
-    GetMaxDisplayResolution(max_width_, max_height_);
+    width_ = width;
+    height_ = height;
 
     if (!CreateD3DDevice()) return false;
     if (!CreateSwapChain()) return false;
@@ -76,10 +77,6 @@ void Direct2DRenderer::ReleaseResources() {
     d2d_device_.Reset();
     d2d_factory_.Reset();
 
-    if (waitable_object_) {
-        CloseHandle(waitable_object_);
-        waitable_object_ = nullptr;
-    }
     swap_chain_.Reset();
 
     dcomp_visual_.Reset();
@@ -142,8 +139,8 @@ bool Direct2DRenderer::CreateD3DDevice() {
 
 bool Direct2DRenderer::CreateSwapChain() {
     DXGI_SWAP_CHAIN_DESC1 desc{};
-    desc.Width = static_cast<UINT>(max_width_);
-    desc.Height = static_cast<UINT>(max_height_);
+    desc.Width = static_cast<UINT>(width_);
+    desc.Height = static_cast<UINT>(height_);
     desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     desc.SampleDesc.Count = 1;
     desc.SampleDesc.Quality = 0;
@@ -151,7 +148,6 @@ bool Direct2DRenderer::CreateSwapChain() {
     desc.BufferCount = 2;
     desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
     desc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
-    desc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
 
     Microsoft::WRL::ComPtr<IDXGISwapChain1> swap_chain1;
     HRESULT hr = dxgi_factory_->CreateSwapChainForComposition(
@@ -169,16 +165,6 @@ bool Direct2DRenderer::CreateSwapChain() {
         return false;
     }
 
-    hr = swap_chain_->SetMaximumFrameLatency(1);
-    if (FAILED(hr)) {
-        LOG_WARN(std::format("SetMaximumFrameLatency failed: {}", HResultToString(hr)));
-    }
-
-    waitable_object_ = swap_chain_->GetFrameLatencyWaitableObject();
-    if (!waitable_object_) {
-        LOG_WARN("GetFrameLatencyWaitableObject returned nullptr.");
-    }
-
     return true;
 }
 
@@ -188,7 +174,7 @@ bool Direct2DRenderer::CreateD2DResources() {
     options.debugLevel = D2D1_DEBUG_LEVEL_WARNING;
 #endif
 
-    HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, options,
+    HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, options,
                                    d2d_factory_.GetAddressOf());
     if (FAILED(hr)) {
         LOG_ERROR(std::format("D2D1CreateFactory failed: {}", HResultToString(hr)));
@@ -334,15 +320,18 @@ bool Direct2DRenderer::CheckDeviceLost() {
 bool Direct2DRenderer::RecreateDeviceResources() {
     LOG_INFO("Recreating device resources...");
     ReleaseResources();
-    return Initialize(hwnd_);
+    return Initialize(hwnd_, width_, height_);
 }
 
 void Direct2DRenderer::BeginDraw() {
     if (!d2d_context_) return;
 
-    if (waitable_object_) {
-        // 使用超时等待避免渲染线程在退出时无限阻塞
-        WaitForSingleObject(waitable_object_, 50);
+    // DXGI flip 模型在 Present 后 surface 会变化，需要重新创建 D2D target bitmap
+    if (!d2d_target_bitmap_) {
+        if (!CreateRenderTargetBitmap()) {
+            LOG_ERROR("Failed to recreate render target bitmap in BeginDraw.");
+            return;
+        }
     }
 
     d2d_context_->BeginDraw();
@@ -359,6 +348,11 @@ void Direct2DRenderer::EndDraw() {
 void Direct2DRenderer::Present() {
     if (!swap_chain_) return;
 
+    // Ensure DComp re-composites the updated swap chain content before presenting.
+    if (dcomp_device_) {
+        dcomp_device_->Commit();
+    }
+
     DXGI_PRESENT_PARAMETERS params{};
     RECT dirty_rect = {0, 0, width_, height_};
     params.DirtyRectsCount = 1;
@@ -369,16 +363,35 @@ void Direct2DRenderer::Present() {
         LOG_WARN(std::format("Device removed/reset during Present: {}",
                              HResultToString(hr)));
     }
+
+    // DXGI flip 模型在 Present 后 surface 已变化，释放旧的 target bitmap，
+    // 下次 BeginDraw 会重新创建。
+    d2d_target_bitmap_.Reset();
+    if (d2d_context_) {
+        d2d_context_->SetTarget(nullptr);
+    }
 }
 
 void Direct2DRenderer::Resize(int width, int height) {
+    if (width == width_ && height == height_) return;
     width_ = width;
     height_ = height;
 
     if (!swap_chain_) return;
 
-    // Atomic size strategy: do not call ResizeBuffers, only update DComp clip and target bitmap
+    // Release target bitmap and D2D target before resizing swap chain
     d2d_target_bitmap_.Reset();
+    if (d2d_context_) {
+        d2d_context_->SetTarget(nullptr);
+    }
+
+    HRESULT hr = swap_chain_->ResizeBuffers(0, static_cast<UINT>(width), static_cast<UINT>(height),
+                                            DXGI_FORMAT_UNKNOWN, 0);
+    if (FAILED(hr)) {
+        LOG_ERROR(std::format("IDXGISwapChain2::ResizeBuffers failed: {}", HResultToString(hr)));
+        return;
+    }
+
     if (!CreateRenderTargetBitmap()) {
         LOG_ERROR("Failed to recreate render target bitmap after resize.");
     }
@@ -621,6 +634,35 @@ void Direct2DRenderer::DrawBitmap(BitmapHandle handle, const Rect& dest_rect, fl
     D2D1_RECT_F r = ToD2DRect(dest_rect);
     d2d_context_->DrawBitmap(bitmap, &r, opacity,
                              D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, nullptr);
+}
+
+void Direct2DRenderer::DrawBitmapHighQuality(
+        BitmapHandle handle, const Rect& dest_rect, float opacity) {
+    ID2D1Bitmap* bmp = GetBitmap(handle);
+    if (!bmp || !d2d_context_) return;
+
+    auto px = bmp->GetPixelSize();
+    if (px.width == 0 || px.height == 0) return;
+
+    Microsoft::WRL::ComPtr<ID2D1Effect> effect;
+    if (FAILED(d2d_context_->CreateEffect(CLSID_D2D1Scale, &effect))) {
+        DrawBitmap(handle, dest_rect, opacity); // fallback
+        return;
+    }
+    effect->SetInput(0, bmp);
+    float sx = dest_rect.w / static_cast<float>(px.width);
+    float sy = dest_rect.h / static_cast<float>(px.height);
+    effect->SetValue(D2D1_SCALE_PROP_SCALE, D2D1_VECTOR_2F{sx, sy});
+    effect->SetValue(D2D1_SCALE_PROP_INTERPOLATION_MODE,
+                     D2D1_SCALE_INTERPOLATION_MODE_CUBIC);
+    effect->SetValue(D2D1_SCALE_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD);
+
+    D2D1_POINT_2F target_offset = D2D1::Point2F(dest_rect.x, dest_rect.y);
+    d2d_context_->DrawImage(effect.Get(),
+                            &target_offset,
+                            nullptr,
+                            D2D1_INTERPOLATION_MODE_LINEAR,
+                            D2D1_COMPOSITE_MODE_SOURCE_OVER);
 }
 
 } // namespace overlay::overlay

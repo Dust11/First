@@ -72,6 +72,7 @@ public:
     virtual BitmapHandle CreateBitmapFromImageData(const ::overlay::utils::ImageData& image_data) = 0;
     virtual void ReleaseBitmap(BitmapHandle handle) = 0;
     virtual void DrawBitmap(BitmapHandle handle, const Rect& dest_rect, float opacity) = 0;
+    virtual void DrawBitmapHighQuality(BitmapHandle handle, const Rect& dest_rect, float opacity) = 0;
 
     // --- Escape hatch ---
     virtual void* GetRawContext() = 0;

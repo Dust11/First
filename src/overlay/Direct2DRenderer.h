@@ -23,7 +23,7 @@ public:
     Direct2DRenderer(const Direct2DRenderer&) = delete;
     Direct2DRenderer& operator=(const Direct2DRenderer&) = delete;
 
-    bool Initialize(HWND hwnd);
+    bool Initialize(HWND hwnd, int width, int height);
     void Shutdown();
 
     // Device lost detection and recovery
@@ -61,6 +61,7 @@ public:
     BitmapHandle CreateBitmapFromImageData(const ::overlay::utils::ImageData& image_data) override;
     void ReleaseBitmap(BitmapHandle handle) override;
     void DrawBitmap(BitmapHandle handle, const Rect& dest_rect, float opacity) override;
+    void DrawBitmapHighQuality(BitmapHandle handle, const Rect& dest_rect, float opacity) override;
     void* GetRawContext() override { return d2d_context_.Get(); }
 
 private:
@@ -82,10 +83,6 @@ private:
     int height_ = 0;
     bool visible_ = true;
 
-    // Atomic size swap chain: created at max display resolution, clip controls visible area
-    int max_width_ = 0;
-    int max_height_ = 0;
-
     Microsoft::WRL::ComPtr<ID3D11Device> d3d_device_;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> d3d_context_;
     Microsoft::WRL::ComPtr<IDXGIDevice1> dxgi_device_;
@@ -93,7 +90,6 @@ private:
     Microsoft::WRL::ComPtr<IDXGIFactory2> dxgi_factory_;
 
     Microsoft::WRL::ComPtr<IDXGISwapChain2> swap_chain_;
-    HANDLE waitable_object_ = nullptr;
 
     Microsoft::WRL::ComPtr<ID2D1Factory2> d2d_factory_;
     Microsoft::WRL::ComPtr<ID2D1Device1> d2d_device_;

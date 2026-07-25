@@ -59,6 +59,7 @@ set(SOURCES
     src/utils/TextEncoding.cpp
     src/utils/ResourceLoader.cpp
     src/utils/HotkeyManager.cpp
+    src/utils/FileWatcher.cpp
     src/core/TeamRotation.cpp
     src/core/ConfigManager.cpp
     src/core/PlaybackEngine.cpp
@@ -75,6 +76,7 @@ set(HEADERS
     src/utils/TextEncoding.h
     src/utils/ResourceLoader.h
     src/utils/HotkeyManager.h
+    src/utils/FileWatcher.h
     src/core/TeamRotation.h
     src/core/ConfigManager.h
     src/core/PlaybackEngine.h
@@ -114,6 +116,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     winmm
     imm32
     version
+    comctl32
 )
 
 # 复制 profiles/ 与 assets/ 到输出目录
@@ -132,3 +135,13 @@ install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION .)
 install(DIRECTORY profiles/ DESTINATION profiles)
 install(DIRECTORY assets/ DESTINATION assets)
 install(FILES README.md DESTINATION .)
+
+# CPack ZIP 绿色包配置
+set(CPACK_GENERATOR "ZIP")
+set(CPACK_PACKAGE_NAME "MingCKeyOverlay")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_VENDOR "MingC")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "鸣潮弹幕式按键提示 overlay")
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
+set(CPACK_ARCHIVE_FILE_NAME "MingCKeyOverlay-${PROJECT_VERSION}-win64")
+include(CPack)

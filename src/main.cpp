@@ -5,17 +5,24 @@
 #include "overlay/Direct2DRenderer.h"
 #include "overlay/OverlayWindow.h"
 #include "overlay/VisualRenderer.h"
+#include "utils/FileWatcher.h"
 #include "utils/HotkeyManager.h"
 #include "utils/Logger.h"
 #include "utils/ResourceLoader.h"
 #include "utils/TextEncoding.h"
 
 #include <windows.h>
+#include <shellapi.h>
+#include <commctrl.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <latch>
 #include <format>
 #include <memory>
+#include <mutex>
+#include <string_view>
 #include <thread>
 
 namespace fs = std::filesystem;
@@ -40,6 +47,7 @@ struct AppContext {
     overlay::overlay::Direct2DRenderer* renderer = nullptr;
     overlay::overlay::VisualRenderer* visual_renderer = nullptr;
     overlay::editor::EditorWindow* editor = nullptr;
+    overlay::utils::FileWatcher* file_watcher = nullptr;
 
     overlay::core::EventDrivenKeyDetector event_detector;
     overlay::core::PollingKeyDetector polling_detector;
@@ -49,6 +57,8 @@ struct AppContext {
     std::atomic<bool> visible{true};
     std::atomic<bool> wrong_key_flash{false};
     std::chrono::steady_clock::time_point wrong_flash_start;
+
+    std::mutex config_mutex;
 
     std::optional<overlay::utils::ImageData> bg_data;
     std::optional<overlay::utils::ImageData> avatar_data;
@@ -207,16 +217,19 @@ static void OpenEditor(AppContext& ctx) {
     if (!ctx.editor->IsOpen()) {
         ctx.editor->Show();
         ctx.playback_engine->Pause();
+        if (ctx.file_watcher) ctx.file_watcher->Pause();
         LOG_INFO("Editor opened.");
     } else {
         ctx.editor->Hide();
         ctx.playback_engine->Play();
+        if (ctx.file_watcher) ctx.file_watcher->Resume();
         LOG_INFO("Editor closed.");
     }
 }
 
 static void ReloadConfig(AppContext& ctx) {
     if (!ctx.config_manager) return;
+    std::lock_guard<std::mutex> lock(ctx.config_mutex);
     if (ctx.config_manager->Load()) {
         ctx.mode = GetModeString(*ctx.config_manager);
         ApplyActiveRotation(ctx);
@@ -261,7 +274,33 @@ static void HandleHotkeyAction(AppContext& ctx, const std::string& action) {
     }
 }
 
-static void RenderLoop(AppContext& ctx) {
+constexpr UINT WM_USER_CONFIG_CHANGED = WM_APP + 42;
+constexpr UINT_PTR kConfigReloadTimerId = 1001;
+constexpr UINT kConfigReloadDebounceMs = 400;
+
+static LRESULT CALLBACK OverlaySubclassProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam,
+                                            UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    auto* ctx = reinterpret_cast<AppContext*>(dwRefData);
+    if (msg == WM_USER_CONFIG_CHANGED) {
+        if (!ctx || !ctx->file_watcher || ctx->file_watcher->IsPaused()) return 0;
+        KillTimer(hWnd, kConfigReloadTimerId);
+        SetTimer(hWnd, kConfigReloadTimerId, kConfigReloadDebounceMs, nullptr);
+        return 0;
+    }
+    if (msg == WM_TIMER && wParam == kConfigReloadTimerId) {
+        KillTimer(hWnd, kConfigReloadTimerId);
+        if (ctx && ctx->file_watcher && !ctx->file_watcher->IsPaused()) {
+            ReloadConfig(*ctx);
+        }
+        return 0;
+    }
+    if (msg == WM_NCDESTROY) {
+        RemoveWindowSubclass(hWnd, OverlaySubclassProc, uIdSubclass);
+    }
+    return DefSubclassProc(hWnd, msg, wParam, lParam);
+}
+
+static void RenderLoopBody(AppContext& ctx) {
     using clock = std::chrono::steady_clock;
     auto last_time = clock::now();
     auto last_poll = clock::now();
@@ -280,60 +319,72 @@ static void RenderLoop(AppContext& ctx) {
             last_poll = now;
         }
 
-        const auto* rotation = GetActiveRotation(*ctx.config_manager);
-
-        // 按键检测模式推进
-        if (ModeIsKey(ctx.mode) && ctx.active_detector && rotation &&
-            ctx.playback_engine &&
-            ctx.playback_engine->GetState() == overlay::core::PlaybackState::Playing) {
-            ctx.active_detector->Update();
-            size_t step = ctx.playback_engine->CurrentStep();
-            if (step < rotation->steps.size()) {
-                const std::string& expected = rotation->steps[step].key;
-                if (ctx.active_detector->WasKeyPressed(expected)) {
-                    ctx.playback_engine->NextStep();
-                }
-                if (ctx.active_detector->IsWrongKeyPressed()) {
-                    ctx.wrong_key_flash.store(true, std::memory_order_release);
-                    ctx.wrong_flash_start = now;
-                }
-            }
-        }
-
-        // 自动播放模式推进
-        if (!ModeIsKey(ctx.mode) && ctx.playback_engine) {
-            ctx.playback_engine->Update(dt_ms);
-        }
-
-        // 加载当前步骤所需图像
-        LoadCurrentImages(ctx);
-
-        // 计算错键闪烁强度（300ms）
         float wrong_flash = 0.0f;
-        if (ctx.wrong_key_flash.load(std::memory_order_acquire)) {
-            auto elapsed = std::chrono::duration<float, std::milli>(now - ctx.wrong_flash_start).count();
-            if (elapsed >= 300.0f) {
-                ctx.wrong_key_flash.store(false, std::memory_order_release);
-            } else {
-                wrong_flash = 1.0f - (elapsed / 300.0f);
+        overlay::overlay::RenderState state{};
+
+        {
+            std::lock_guard<std::mutex> lock(ctx.config_mutex);
+
+            const auto* rotation = GetActiveRotation(*ctx.config_manager);
+
+            // 按键检测模式推进
+            if (ModeIsKey(ctx.mode) && ctx.active_detector && rotation &&
+                ctx.playback_engine &&
+                ctx.playback_engine->GetState() == overlay::core::PlaybackState::Playing) {
+                ctx.active_detector->Update();
+                size_t step = ctx.playback_engine->CurrentStep();
+                if (step < rotation->steps.size()) {
+                    const std::string& expected = rotation->steps[step].key;
+                    if (ctx.active_detector->WasKeyPressed(expected)) {
+                        ctx.playback_engine->NextStep();
+                    }
+                    if (ctx.active_detector->IsWrongKeyPressed()) {
+                        ctx.wrong_key_flash.store(true, std::memory_order_release);
+                        ctx.wrong_flash_start = now;
+                    }
+                }
             }
+
+            // 自动播放模式推进
+            if (!ModeIsKey(ctx.mode) && ctx.playback_engine) {
+                ctx.playback_engine->Update(dt_ms);
+            }
+
+            // 加载当前步骤所需图像
+            LoadCurrentImages(ctx);
+
+            // 计算错键闪烁强度（300ms）
+            if (ctx.wrong_key_flash.load(std::memory_order_acquire)) {
+                auto elapsed = std::chrono::duration<float, std::milli>(now - ctx.wrong_flash_start).count();
+                if (elapsed >= 300.0f) {
+                    ctx.wrong_key_flash.store(false, std::memory_order_release);
+                } else {
+                    wrong_flash = 1.0f - (elapsed / 300.0f);
+                }
+            }
+
+            state.current_step = ctx.playback_engine ? ctx.playback_engine->CurrentStep() : 0;
+            state.scale = GetScale(*ctx.config_manager);
+            state.opacity = GetOpacity(*ctx.config_manager);
+            state.move_mode = ctx.window ? ctx.window->IsMoveMode() : false;
+            state.wrong_key_flash = wrong_flash;
+            state.window_width = static_cast<float>(ctx.window ? ctx.window->GetClientWidth() : 800);
+            state.window_height = static_cast<float>(ctx.window ? ctx.window->GetClientHeight() : 120);
+            state.show_progress = GetBoolSetting(*ctx.config_manager, "display", "show_progress", false);
+            if (rotation && !rotation->steps.empty() && ctx.playback_engine) {
+                state.overall_progress = (static_cast<float>(ctx.playback_engine->CurrentStep()) +
+                                          ctx.playback_engine->CurrentStepProgress()) /
+                                         static_cast<float>(rotation->steps.size());
+            }
+            state.bg_image = ctx.bg_data ? &*ctx.bg_data : nullptr;
+            state.avatar_image = ctx.avatar_data ? &*ctx.avatar_data : nullptr;
+
+            ctx.renderer->BeginDraw();
+            ctx.renderer->Clear({0.0f, 0.0f, 0.0f, 0.0f});
+            ctx.visual_renderer->Render(state);
+            ctx.renderer->EndDraw();
         }
 
-        overlay::overlay::RenderState state{};
-        state.current_step = ctx.playback_engine ? ctx.playback_engine->CurrentStep() : 0;
-        state.scale = GetScale(*ctx.config_manager);
-        state.opacity = GetOpacity(*ctx.config_manager);
-        state.move_mode = ctx.window ? ctx.window->IsMoveMode() : false;
-        state.wrong_key_flash = wrong_flash;
-        state.window_width = static_cast<float>(ctx.window ? ctx.window->GetClientWidth() : 800);
-        state.window_height = static_cast<float>(ctx.window ? ctx.window->GetClientHeight() : 120);
-        state.bg_image = ctx.bg_data ? &*ctx.bg_data : nullptr;
-        state.avatar_image = ctx.avatar_data ? &*ctx.avatar_data : nullptr;
-
-        ctx.renderer->BeginDraw();
-        ctx.renderer->Clear({0.0f, 0.0f, 0.0f, 0.0f});
-        ctx.visual_renderer->Render(state);
-        ctx.renderer->EndDraw();
         ctx.renderer->Present();
 
         // 渲染编辑器窗口（如果打开）
@@ -347,14 +398,77 @@ static void RenderLoop(AppContext& ctx) {
     }
 }
 
+static void CenterWindowOnPrimaryMonitor(int window_width, int window_height,
+                                         int& out_x, int& out_y) {
+    out_x = 100;
+    out_y = 100;
+
+    POINT pt{0, 0};
+    HMONITOR hMonitor = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
+    if (!hMonitor) return;
+
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    if (!GetMonitorInfoW(hMonitor, &info)) return;
+
+    const RECT& work = info.rcWork;
+    int work_w = static_cast<int>(work.right - work.left);
+    int work_h = static_cast<int>(work.bottom - work.top);
+    out_x = work.left + std::max(0, (work_w - window_width) / 2);
+    out_y = work.top + std::max(0, (work_h - window_height) / 2);
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
+    fs::path exe_dir = GetExeDirectory();
+
+    // 解析命令行参数（日志初始化前完成，便于单实例检测时跳过弹窗）
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    bool smoke_test = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::wstring_view(argv[i]) == L"--smoke-test") {
+            smoke_test = true;
+        } else if (std::wstring_view(argv[i]) == L"--help") {
+            LocalFree(argv);
+            MessageBoxW(nullptr,
+                        L"Usage: MingCKeyOverlay.exe [--smoke-test] [--help]",
+                        L"MingC Key Overlay",
+                        MB_OK | MB_ICONINFORMATION);
+            return 0;
+        }
+    }
+    LocalFree(argv);
+
+    // 单实例检测：已有实例运行时激活其窗口并退出
+    constexpr wchar_t kSingleInstanceMutexName[] =
+        L"MingCKeyOverlay_SingleInstance_Mutex";
+    HANDLE hMutex = CreateMutexW(nullptr, FALSE, kSingleInstanceMutexName);
+    if (hMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        HWND hwnd = FindWindowW(overlay::overlay::OverlayWindow::ClassName(),
+                                nullptr);
+        if (hwnd) {
+            ShowWindow(hwnd, SW_SHOWNA);
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+            SetForegroundWindow(hwnd);
+        }
+        if (!smoke_test) {
+            MessageBoxW(nullptr,
+                        L"程序已在运行，已切换到已有窗口。",
+                        L"MingC Key Overlay",
+                        MB_OK | MB_ICONINFORMATION);
+        }
+        CloseHandle(hMutex);
+        return 0;
+    }
+
+    overlay::utils::Logger::Instance().Init(exe_dir / "overlay.log");
+
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(hr)) {
         return 1;
     }
 
-    fs::path exe_dir = GetExeDirectory();
-    overlay::utils::Logger::Instance().Init(exe_dir / "overlay.log");
     LOG_INFO("Application started.");
 
     // 验证 TextEncoding 中文字符串往返
@@ -418,11 +532,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         visual_renderer.ComputeWindowSize(scale, window_width, window_height);
     }
 
+    constexpr wchar_t kOverlayWindowTitle[] = L"MingC Key Overlay";
+
+    int window_x = 100;
+    int window_y = 100;
+    CenterWindowOnPrimaryMonitor(static_cast<int>(window_width),
+                                 static_cast<int>(window_height),
+                                 window_x, window_y);
+
     // 创建 overlay 窗口
     overlay::overlay::OverlayWindow window;
     ctx.window = &window;
-    if (!window.Create(hInstance, L"MingC Key Overlay",
-                       100, 100,
+    if (!window.Create(hInstance, kOverlayWindowTitle,
+                       window_x, window_y,
                        static_cast<int>(window_width),
                        static_cast<int>(window_height))) {
         LOG_ERROR("Failed to create OverlayWindow.");
@@ -432,6 +554,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
 
     // 按键事件转发给事件驱动检测器
     window.SetKeyEventCallback([&ctx](UINT msg, WPARAM wParam, LPARAM lParam) {
+        (void)lParam;
         if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
             ctx.event_detector.OnKeyDown(static_cast<std::uint32_t>(wParam));
         } else if (msg == WM_KEYUP || msg == WM_SYSKEYUP) {
@@ -458,41 +581,103 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     window.Show();
     LOG_INFO("OverlayWindow shown.");
 
-    HWND hwnd = window.GetHwnd();
-    if (!renderer.Initialize(hwnd)) {
-        LOG_ERROR("Failed to initialize Direct2DRenderer.");
+    // 在渲染线程中初始化 D2D/DComp 资源（DComp 设备有线程亲和性）
+    std::latch render_init_latch(1);
+    std::thread render_thread([&ctx, &render_init_latch, window_width, window_height]() {
+        HWND hwnd = ctx.window->GetHwnd();
+        if (!ctx.renderer->Initialize(hwnd, static_cast<int>(window_width),
+                                      static_cast<int>(window_height))) {
+            LOG_ERROR("Failed to initialize Direct2DRenderer.");
+            ctx.running.store(false, std::memory_order_release);
+            render_init_latch.count_down();
+            return;
+        }
+        LOG_INFO("Renderer initialized on render thread.");
+        render_init_latch.count_down();
+        RenderLoopBody(ctx);
+    });
+
+    render_init_latch.wait();
+    if (!ctx.running.load(std::memory_order_acquire)) {
+        LOG_ERROR("Render thread initialization failed.");
+        render_thread.join();
         CoUninitialize();
         return 1;
     }
-    renderer.Resize(static_cast<int>(window_width), static_cast<int>(window_height));
+
+    HWND hwnd = window.GetHwnd();
 
     // 初始化编辑器窗口（延迟到首次打开时再创建 D3D/ImGui 资源）
     editor.Initialize(hwnd, renderer.GetD3DDevice());
+    editor.SetConfigManager(&config_manager);
+    editor.SetApplyCallback([&ctx]() {
+        if (ctx.file_watcher) ctx.file_watcher->Pause();
+        auto resume_guard = [](void* p) {
+            auto* c = static_cast<AppContext*>(p);
+            if (c->file_watcher) c->file_watcher->Resume();
+        };
+        std::unique_ptr<void, decltype(resume_guard)> guard(&ctx, resume_guard);
+
+        ApplyActiveRotation(ctx);
+        SwitchKeyDetector(ctx);
+        if (ctx.hotkey_manager && ctx.window) {
+            ctx.hotkey_manager->UnregisterAll();
+            try {
+                ctx.hotkey_manager->RegisterFromConfig(
+                    ctx.config_manager->GetConfig().settings.at("hotkeys"),
+                    ctx.window->GetHwnd());
+            } catch (...) {
+                LOG_ERROR("Failed to re-register hotkeys after editor save.");
+            }
+        }
+    });
 
     // 初始化播放引擎与按键检测器
     ApplyActiveRotation(ctx);
     SwitchKeyDetector(ctx);
 
-    // 启动自动关闭计时器（仅用于阶段验证，最终产品可移除）
-    std::thread timer([hwnd]() {
-        std::this_thread::sleep_for(5s);
-        LOG_INFO("Auto-close timer elapsed, posting WM_CLOSE.");
-        PostMessageW(hwnd, WM_CLOSE, 0, 0);
-    });
+    // 配置文件热加载
+    overlay::utils::FileWatcher file_watcher;
+    if (file_watcher.Start(config_manager.GetExeDirectory() / "profiles" / "default.json",
+                           window.GetHwnd(), WM_USER_CONFIG_CHANGED)) {
+        ctx.file_watcher = &file_watcher;
+    }
+    SetWindowSubclass(window.GetHwnd(), OverlaySubclassProc, 0,
+                      reinterpret_cast<DWORD_PTR>(&ctx));
 
-    std::thread render_thread(RenderLoop, std::ref(ctx));
+    // 仅在 --smoke-test 模式下启动自动关闭计时器
+    std::thread timer;
+    if (smoke_test) {
+        timer = std::thread([hwnd]() {
+            std::this_thread::sleep_for(2s);
+            LOG_INFO("Smoke-test timer elapsed, posting WM_CLOSE.");
+            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        });
+    }
 
     window.RunMessageLoop();
+    LOG_INFO("Message loop exited.");
 
     ctx.running.store(false, std::memory_order_release);
+    LOG_INFO("Waiting for render thread...");
     render_thread.join();
-    timer.join();
+    LOG_INFO("Render thread joined.");
+    if (timer.joinable()) {
+        LOG_INFO("Waiting for timer thread...");
+        timer.join();
+        LOG_INFO("Timer thread joined.");
+    }
 
     if (ctx.active_detector == &ctx.polling_detector) {
         ctx.polling_detector.Stop();
     }
+    LOG_INFO("Unregistering hotkeys...");
     hotkey_manager.UnregisterAll();
+    LOG_INFO("Shutting down editor...");
     editor.Shutdown();
+    renderer.Shutdown();
+    window.Destroy();
+    resource_loader.Shutdown();
 
     LOG_INFO("Application exiting.");
     CoUninitialize();

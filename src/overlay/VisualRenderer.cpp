@@ -174,6 +174,9 @@ void VisualRenderer::Render(const RenderState& state) {
     // Stage bar
     DrawStageBar(state, theme_color);
 
+    // Progress bar
+    DrawProgressBar(state, theme_color);
+
     // Avatar
     DrawAvatar(state, theme_color);
 
@@ -206,7 +209,7 @@ void VisualRenderer::DrawBackground(const RenderState& state, const Color& theme
             draw_x = 0.0f;
             draw_y = (h - draw_h) * 0.5f;
         }
-        renderer_->DrawBitmap(bg_bitmap_, {draw_x, draw_y, draw_w, draw_h}, state.opacity);
+        renderer_->DrawBitmapHighQuality(bg_bitmap_, {draw_x, draw_y, draw_w, draw_h}, state.opacity);
 
         // Darkening overlay for readability
         renderer_->FillRect({0.0f, 0.0f, w, h}, Color{0.0f, 0.0f, 0.0f, 0.40f * state.opacity});
@@ -298,6 +301,31 @@ void VisualRenderer::DrawStageBar(const RenderState& state, const Color& theme_c
         Rect text_rect{seg_x + 2.0f * s, 0.0f, seg_width - 4.0f * s, h};
         TextFormatHandle fmt = is_current ? fmt_bold_ : fmt_normal_;
         renderer_->DrawString(fmt, label.c_str(), label.size(), text_rect, text_color, true, true);
+    }
+}
+
+void VisualRenderer::DrawProgressBar(const RenderState& state, const Color& theme_color) {
+    if (!state.show_progress) return;
+
+    float s = state.scale;
+    float h = 4.0f * s;
+    float margin = 8.0f * s;
+    float y = (kStageBarHeight * s) + margin;
+    float left = margin;
+    float right = state.window_width - margin;
+    if (right <= left) return;
+
+    RoundedRect track{left, y, right - left, h, h * 0.5f, h * 0.5f};
+    // Track: semi-transparent white
+    renderer_->FillRoundedRect(track,
+        WithAlpha(Color{1.0f, 1.0f, 1.0f, 0.2f}, state.opacity));
+
+    if (state.overall_progress > 0.0f) {
+        float fill_w = (right - left) * state.overall_progress;
+        RoundedRect fill{left, y, fill_w, h, h * 0.5f, h * 0.5f};
+        // Fill: theme color
+        renderer_->FillRoundedRect(fill,
+            WithAlpha(theme_color, 0.9f * state.opacity));
     }
 }
 

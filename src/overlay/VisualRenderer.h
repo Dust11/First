@@ -19,6 +19,8 @@ struct RenderState {
     float wrong_key_flash = 0.0f; // 0..1 progress
     float window_width = 0;
     float window_height = 0;
+    float overall_progress = 0.0f;   // 0..1
+    bool show_progress = false;
     const ::overlay::utils::ImageData* bg_image = nullptr;
     const ::overlay::utils::ImageData* avatar_image = nullptr;
 };
@@ -48,6 +50,7 @@ private:
     void DrawBackground(const RenderState& state, const Color& theme_color);
     void DrawBorderAndGlow(const RenderState& state, const Color& theme_color);
     void DrawStageBar(const RenderState& state, const Color& theme_color);
+    void DrawProgressBar(const RenderState& state, const Color& theme_color);
     void DrawAvatar(const RenderState& state, const Color& theme_color);
     void DrawKeySequence(const RenderState& state, const Color& theme_color);
     void DrawKeyIcon(float x, float y, float size, const std::string& key_icon,

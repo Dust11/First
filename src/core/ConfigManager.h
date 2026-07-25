@@ -25,6 +25,7 @@ public:
     AppConfig& GetConfig() { return config_; }
     const AppConfig& GetConfig() const { return config_; }
     std::optional<TeamRotation*> GetActiveRotation();
+    const std::filesystem::path& GetExeDirectory() const { return exe_dir_; }
 
 private:
     std::filesystem::path exe_dir_;

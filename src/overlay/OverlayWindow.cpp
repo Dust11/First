@@ -17,6 +17,10 @@ constexpr wchar_t kClassName[] = L"MingCKeyOverlayWindow";
 
 OverlayWindow::OverlayWindow() = default;
 
+const wchar_t* OverlayWindow::ClassName() {
+    return kClassName;
+}
+
 OverlayWindow::~OverlayWindow() {
     Destroy();
 }
@@ -186,12 +190,16 @@ LRESULT CALLBACK OverlayWindow::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
 LRESULT OverlayWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_DESTROY:
+        LOG_INFO("OverlayWindow destroyed, posting WM_QUIT.");
         PostQuitMessage(0);
         return 0;
 
     case WM_CLOSE:
         LOG_INFO("OverlayWindow received WM_CLOSE, destroying window.");
-        DestroyWindow(hwnd_);
+        if (!DestroyWindow(hwnd_)) {
+            LOG_ERROR(std::format("DestroyWindow failed, error={}", GetLastError()));
+        }
+        PostQuitMessage(0);
         return 0;
 
     case WM_DPICHANGED: {
@@ -231,8 +239,10 @@ LRESULT OverlayWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_LBUTTONDOWN:
         if (move_mode_) {
             dragging_ = true;
-            drag_start_pos_.x = GET_X_LPARAM(lParam);
-            drag_start_pos_.y = GET_Y_LPARAM(lParam);
+            POINT pt{};
+            GetCursorPos(&pt);
+            drag_start_pos_.x = pt.x;
+            drag_start_pos_.y = pt.y;
             RECT rc{};
             GetWindowRect(hwnd_, &rc);
             drag_start_window_pos_.x = rc.left;
@@ -243,8 +253,10 @@ LRESULT OverlayWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_MOUSEMOVE:
         if (move_mode_ && dragging_) {
-            int dx = GET_X_LPARAM(lParam) - drag_start_pos_.x;
-            int dy = GET_Y_LPARAM(lParam) - drag_start_pos_.y;
+            POINT pt{};
+            GetCursorPos(&pt);
+            int dx = pt.x - drag_start_pos_.x;
+            int dy = pt.y - drag_start_pos_.y;
             SetPosition(drag_start_window_pos_.x + dx, drag_start_window_pos_.y + dy);
         }
         return 0;
